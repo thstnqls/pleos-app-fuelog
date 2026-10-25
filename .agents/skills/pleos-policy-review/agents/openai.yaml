@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pleos 정책 검토"
+  short_description: "Pleos 공식 정책과 세부 가이드로 앱 개발 장애 요인과 수정 방안 검토"
+  default_prompt: "$pleos-policy-review 현재 앱을 Pleos 정책과 세부 가이드에 대조해 문제 지점, 근거, 우선순위, 수정안과 검증 방법을 작성해줘."
