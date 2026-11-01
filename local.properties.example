@@ -1,0 +1,8 @@
+# Copy this line to local.properties, enter your backend URL, then sync Gradle.
+# Include the API prefix if needed, for example https://your-domain.example/api/v1/
+API_BASE_URL=
+
+# Supabase Dashboard > Project Settings > API / API Keys
+# Public app key only: sb_publishable_... (or legacy anon JWT). Never secret/service_role.
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_PUBLISHABLE_KEY=

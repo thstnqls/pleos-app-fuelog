@@ -2,16 +2,33 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+def localConfig = new Properties()
+def localConfigFile = rootProject.file('local.properties')
+if (localConfigFile.exists()) {
+    localConfigFile.withInputStream { localConfig.load(it) }
+}
+def apiBaseUrl = providers.gradleProperty('API_BASE_URL')
+        .orElse(localConfig.getProperty('API_BASE_URL', '')).get().trim()
+def quotedApiBaseUrl = groovy.json.JsonOutput.toJson(apiBaseUrl)
+def authSetting = { name ->
+    groovy.json.JsonOutput.toJson(providers.gradleProperty(name)
+            .orElse(localConfig.getProperty(name, '')).get().trim())
+}
+
 android {
     namespace 'com.pleos.fuelog'
     compileSdk 36
+    useLibrary 'android.car'
 
     defaultConfig {
         applicationId "com.pleos.fuelog"
-        minSdk 36
+        minSdk 34
         targetSdk 36
         versionCode 1
         versionName "1.0"
+        buildConfigField 'String', 'API_BASE_URL', quotedApiBaseUrl
+        buildConfigField 'String', 'SUPABASE_URL', authSetting('SUPABASE_URL')
+        buildConfigField 'String', 'SUPABASE_PUBLISHABLE_KEY', authSetting('SUPABASE_PUBLISHABLE_KEY')
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -21,6 +38,9 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+    buildFeatures {
+        buildConfig true
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
@@ -32,7 +52,13 @@ dependencies {
 
     implementation libs.appcompat
     implementation libs.material
+    implementation libs.okhttp
+    implementation libs.pleos.vehicle
+    implementation libs.pleos.location
     testImplementation libs.junit
+    testImplementation libs.mockwebserver
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+    implementation "ai.pleos.playground:Vehicle:2.3.2"
 }
