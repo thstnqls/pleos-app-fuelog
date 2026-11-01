@@ -1,0 +1,47 @@
+
+com.pleos.fuelog.diagnostics.EvAvailabilityProbeTest:
+EV_PROBE aaos.ev.energy state=수신 detail=[sensor value omitted]
+
+EV_PROBE aaos.ev.usable state=수신 detail=[sensor value omitted]
+
+EV_PROBE aaos.ev.nominal state=수신 detail=[sensor value omitted]
+
+EV_PROBE aaos.odometer state=설정 없음 detail=[sensor value omitted]
+
+EV_PROBE ev.current state=미지원 detail=ERROR_NOT_SUPPORTED_PROPERTY
+
+EV_PROBE ev.instant state=미지원 detail=ERROR_NOT_SUPPORTED_PROPERTY
+
+EV_PROBE ev.cumulative state=미지원 detail=ERROR_NOT_SUPPORTED_PROPERTY
+
+EV_PROBE ev.charge state=미지원 detail=ERROR_NOT_SUPPORTED_PROPERTY
+
+EV_PROBE ev.soc state=수신 detail=[sensor value omitted]
+
+EV_PROBE all 9 requests answered
+.
+com.pleos.fuelog.diagnostics.DiagnosticSessionTest:....
+
+Time: 0.348
+
+OK (5 tests)
+
+
+
+--- Direct getter comparison ---
+
+com.pleos.fuelog.diagnostics.EvAvailabilityProbeTest:
+EV_PROBE getCurrentEvEfficiency GET FAILED ERROR_NOT_SUPPORTED_PROPERTY
+
+EV_PROBE getEvBatteryStateOfCharge GET VALUE_PRESENT
+
+EV_PROBE getCumulativeEvEfficiency GET FAILED PROPERTY_CONFIG_MISSING
+
+EV_PROBE getInstantaneousEvEfficiency GET FAILED PROPERTY_CONFIG_MISSING
+
+EV_PROBE getSinceChargeEvEfficiency GET FAILED PROPERTY_CONFIG_MISSING
+.
+
+Time: 0.358
+
+OK (1 test)

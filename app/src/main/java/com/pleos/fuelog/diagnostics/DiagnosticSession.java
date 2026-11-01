@@ -20,9 +20,13 @@ public final class DiagnosticSession {
     public DiagnosticSession(Observer observer) { this.observer = observer; }
 
     public Request begin(String key, String source, String unit, boolean stream) {
+        return begin(key, source, unit, stream, false);
+    }
+
+    public Request begin(String key, String source, String unit, boolean stream, boolean allowNegative) {
         Request previous = requests.remove(key);
         if (previous != null) main.removeCallbacks(previous.timeout);
-        Request request = new Request(key, source, unit, stream);
+        Request request = new Request(key, source, unit, stream, allowNegative);
         if (closed) return request;
         requests.put(key, request);
         request.publish("대기", "응답 대기 중");
@@ -47,17 +51,19 @@ public final class DiagnosticSession {
     public final class Request {
         private final String key, source, unit;
         private final boolean stream;
+        private final boolean allowNegative;
         private boolean finished;
         private String capability = "";
         private final Runnable timeout = () -> {
             if (isActive()) finish("시간 초과", "12초 내 응답 없음 · 구독 중이면 중지 후 재시작");
         };
 
-        private Request(String key, String source, String unit, boolean stream) {
+        private Request(String key, String source, String unit, boolean stream, boolean allowNegative) {
             this.key = key;
             this.source = source;
             this.unit = unit;
             this.stream = stream;
+            this.allowNegative = allowNegative;
         }
 
         public void dispatch(Runnable action) {
@@ -83,11 +89,12 @@ public final class DiagnosticSession {
                 } else if (value instanceof Number
                         && !Double.isFinite(((Number) value).doubleValue())) {
                     complete("값 오류", "유한한 수가 아님");
-                } else if (value instanceof Number && (((Number) value).doubleValue() < 0
+                } else if (value instanceof Number && ((!allowNegative && ((Number) value).doubleValue() < 0)
                         || (unit.equals("%") && ((Number) value).doubleValue() > 100))) {
                     complete("값 오류", value + " " + unit + " · 범위 확인 필요");
                 } else {
-                    complete("수신", value + (unit.isEmpty() ? "" : " " + unit));
+                    String display = value instanceof Enum<?> ? ((Enum<?>) value).name() : String.valueOf(value);
+                    complete("수신", display + (unit.isEmpty() ? "" : " " + unit));
                 }
             });
         }

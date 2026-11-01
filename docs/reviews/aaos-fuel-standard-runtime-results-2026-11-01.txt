@@ -1,0 +1,31 @@
+Device: emulator-5554, Pleos Connect v2.1.0 / API 34, Android user 10
+Vehicle SDK: 2.3.2
+UX: baseline 0x0, parked diagnostic permitted
+
+Actual standard-AAOS fuel read results:
+aaos.fuel         FUEL_LEVEL                   state=수신 [sensor value omitted]
+aaos.capacity     INFO_FUEL_CAPACITY            state=수신 [sensor value omitted]
+aaos.fuel.percent FUEL_LEVEL / capacity * 100   state=수신 [derived value omitted]
+aaos.fuel.instant INSTANTANEOUS_FUEL_ECONOMY    state=설정 없음
+
+설정 없음 means unsupported or not exposed with current permissions. It does not
+establish that the VHAL never implements this property.
+
+Permission definitions checked in the complete package-permission dump:
+pleos.car.permission.CAR_DRIVE: owner=ai.pleos.playground.service.vehicle, protection=normal
+android.car.permission.CAR_ENERGY: owner=com.android.car.updatable, protection=dangerous
+android.car.permission.CAR_MILEAGE: signature|privileged
+android.car.permission.CAR_MILEAGE_3P: no definition found on this image
+
+After correcting the consumer Manifest to uses-permission:
+pleos.car.permission.CAR_DRIVE: granted=true in installed app package
+AAOS CAR_ENERGY: granted=true for Android user 10
+
+Build: assembleDebug, assembleDebugAndroidTest, testDebugUnitTest, lintDebug passed
+Unit tests: 20 passed
+Instrumentation: 14 passed, including a temporary parked-AAOS fuel runtime probe
+Permanent regression tests: 13 (UI, DiagnosticSession, Drive service, Fuel service)
+Temporary probe archived outside repository at:
+/private/tmp/fuelog-aaos-fuel-runtime-probe-2026-11-01.java
+
+No raw fuel readings, VIN, location, or credentials recorded.

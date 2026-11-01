@@ -86,4 +86,20 @@ public class DiagnosticSessionTest {
         assertEquals("읽기 불가", state.get());
         main(() -> session[0].close());
     }
+
+    @Test public void signedAnglesDoNotRelaxOtherNumericValidation() {
+        java.util.Map<String, String> states = new java.util.HashMap<>();
+        DiagnosticSession[] session = new DiagnosticSession[1];
+        main(() -> {
+            session[0] = new DiagnosticSession((key, source, state, value, time) -> states.put(key, state));
+            session[0].begin("steering", "sdk", "°", false, true).value(-12.5f);
+            session[0].begin("distance", "sdk", "km", false).value(-1f);
+            session[0].begin("invalid", "sdk", "°", false, true).value(Float.NaN);
+        });
+        drain();
+        assertEquals("수신", states.get("steering"));
+        assertEquals("값 오류", states.get("distance"));
+        assertEquals("값 오류", states.get("invalid"));
+        main(() -> session[0].close());
+    }
 }

@@ -1,0 +1,22 @@
+
+com.pleos.fuelog.diagnostics.OdometerConsoleProbeTest:
+CONSOLE_PROBE UX requiresDO=false active=0x0
+
+CONSOLE_PROBE GET sample=0 valuePresent=true changedFromFirstRead=false
+
+CONSOLE_PROBE EVENT count=1 changedFromFirstRead=false
+
+CONSOLE_PROBE EVENT count=2 changedFromFirstRead=false
+
+CONSOLE_PROBE GET sample=1 valuePresent=true changedFromFirstRead=false
+
+CONSOLE_PROBE EVENT count=3 changedFromFirstRead=false
+
+CONSOLE_PROBE GET sample=2 valuePresent=true changedFromFirstRead=false
+
+CONSOLE_PROBE totalEvents=3
+.
+
+Time: 10.39
+
+OK (1 test)

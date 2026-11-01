@@ -22,7 +22,7 @@ android {
 
     defaultConfig {
         applicationId "com.pleos.fuelog"
-        minSdk 34
+        minSdk 28
         targetSdk 36
         versionCode 1
         versionName "1.0"
@@ -43,8 +43,8 @@ android {
         buildConfig true
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 }
 
@@ -61,4 +61,5 @@ dependencies {
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
     implementation "ai.pleos.playground:Vehicle:2.3.2"
+    implementation "ai.pleos.playground:FusedLocation:1.1.3"
 }

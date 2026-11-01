@@ -16,7 +16,11 @@ abstract class PleosReadSupport {
     PleosReadSupport(DiagnosticSession session) { this.session = session; }
 
     <T> void read(String key, String unit, CapabilityCall capability, ValueCall<T> getter) {
-        DiagnosticSession.Request request = session.begin(key, "Pleos Vehicle 2.3.2", unit, false);
+        read(key, unit, false, capability, getter);
+    }
+
+    <T> void read(String key, String unit, boolean allowNegative, CapabilityCall capability, ValueCall<T> getter) {
+        DiagnosticSession.Request request = session.begin(key, "Pleos Vehicle 2.3.2", unit, false, allowNegative);
         check(request, capability, () -> getter.call(value -> {
             request.value(value);
             return Unit.INSTANCE;

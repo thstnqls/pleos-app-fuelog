@@ -5,6 +5,22 @@ import ai.pleos.playground.vehicle.listener.FuelPercentListener;
 
 /** Fuel reads and a user-controlled fuel-percent subscription; no transaction inference. */
 public final class FuelDiagnosticService extends PleosReadSupport {
+    public enum Reading {
+        PERCENT("fuel.percent", "연료 잔량 비율", "getFuelPercent", "%"),
+        CURRENT("fuel.current", "현재 운행 연비", "getCurrentFuelEconomy", "L/100km"),
+        CUMULATIVE("fuel.cumulative", "누적 연비", "getCumulativeFuelEconomy", "L/100km"),
+        INSTANT("fuel.instant", "순간 연비", "getInstantaneousFuelEconomy", "L/100km"),
+        REFILL("fuel.refill", "주유 이후 연비", "getSinceChargeFuelEconomy", "L/100km");
+
+        public final String key, label, api, unit;
+        Reading(String key, String label, String api, String unit) {
+            this.key = key;
+            this.label = label;
+            this.api = api;
+            this.unit = unit;
+        }
+    }
+
     private final Fuel fuel;
     private FuelPercentListener listener;
 
@@ -14,11 +30,27 @@ public final class FuelDiagnosticService extends PleosReadSupport {
     }
 
     public void readAll() {
-        this.<Integer>read("fuel.percent", "%", fuel::checkFuelPercentCapabilities, fuel::getFuelPercent);
-        this.<Float>read("fuel.current", "L/100km", fuel::checkCurrentFuelEconomyCapabilities, fuel::getCurrentFuelEconomy);
-        this.<Float>read("fuel.cumulative", "L/100km", fuel::checkCumulativeFuelEconomyCapabilities, fuel::getCumulativeFuelEconomy);
-        this.<Float>read("fuel.instant", "L/100km", fuel::checkInstantaneousFuelEconomyCapabilities, fuel::getInstantaneousFuelEconomy);
-        this.<Float>read("fuel.refill", "L/100km", fuel::checkSinceChargeFuelEconomyCapabilities, fuel::getSinceChargeFuelEconomy);
+        for (Reading item : Reading.values()) read(item);
+    }
+
+    public void read(Reading item) {
+        switch (item) {
+            case PERCENT:
+                this.<Integer>read(item.key, item.unit, fuel::checkFuelPercentCapabilities, fuel::getFuelPercent);
+                break;
+            case CURRENT:
+                this.<Float>read(item.key, item.unit, fuel::checkCurrentFuelEconomyCapabilities, fuel::getCurrentFuelEconomy);
+                break;
+            case CUMULATIVE:
+                this.<Float>read(item.key, item.unit, fuel::checkCumulativeFuelEconomyCapabilities, fuel::getCumulativeFuelEconomy);
+                break;
+            case INSTANT:
+                this.<Float>read(item.key, item.unit, fuel::checkInstantaneousFuelEconomyCapabilities, fuel::getInstantaneousFuelEconomy);
+                break;
+            case REFILL:
+                this.<Float>read(item.key, item.unit, fuel::checkSinceChargeFuelEconomyCapabilities, fuel::getSinceChargeFuelEconomy);
+                break;
+        }
     }
 
     public void startUpdates() {

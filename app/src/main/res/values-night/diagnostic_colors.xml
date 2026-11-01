@@ -1,0 +1,8 @@
+<resources>
+    <color name="diagnostic_success">#8DDCAE</color>
+    <color name="diagnostic_success_background">#153B29</color>
+    <color name="diagnostic_caution">#F7D183</color>
+    <color name="diagnostic_caution_background">#453512</color>
+    <color name="diagnostic_error">#FFB4AB</color>
+    <color name="diagnostic_error_background">#521F1B</color>
+</resources>

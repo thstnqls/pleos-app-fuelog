@@ -67,14 +67,77 @@ public final class AaosVehicleDiagnosticService {
         if (closed) return;
         boolean allowed = current != null && !current.isRequiresDistractionOptimization()
                 && current.getActiveRestrictions() == CarUxRestrictions.UX_RESTRICTIONS_BASELINE;
-        observer.onState(allowed, current == null ? "UX 제한 상태 미확인"
-                : "UX 제한 비트: 0x" + Integer.toHexString(current.getActiveRestrictions())
-                + (allowed ? " · 정차 진단 가능" : " · 진단 중지, 정차 후 이용"));
+        observer.onState(allowed, current == null ? "차량 이용 제한 상태를 확인하지 못했습니다. 연결을 다시 시도하세요."
+                : (allowed ? "정차 확인됨 · 차량 데이터 조회 가능"
+                : "차량 이용 제한으로 조회를 중지했습니다.\n정차 후 연결 재시도를 눌러 상태를 확인하세요.")
+                + "\nUX 제한 비트: 0x" + Integer.toHexString(current.getActiveRestrictions()));
     }
 
     public void readAll(DiagnosticSession session) {
-        read(session, "aaos.fuel", VehiclePropertyIds.FUEL_LEVEL, "mL");
-        read(session, "aaos.capacity", VehiclePropertyIds.INFO_FUEL_CAPACITY, "mL");
+        readFuel(session);
+        readOdometer(session);
+    }
+
+    public void readFuel(DiagnosticSession session) {
+        readFuelLevels(session);
+        readFuelEconomy(session);
+    }
+
+    public void readFuelEconomy(DiagnosticSession session) {
+        read(session, "aaos.fuel.instant", VehiclePropertyIds.INSTANTANEOUS_FUEL_ECONOMY, "L/100km");
+    }
+
+    public void readFuelLevels(DiagnosticSession session) {
+        DiagnosticSession.Request level = session.begin("aaos.fuel", "AAOS FUEL_LEVEL", "mL", false);
+        DiagnosticSession.Request capacity = session.begin("aaos.capacity", "AAOS INFO_FUEL_CAPACITY", "mL", false);
+        DiagnosticSession.Request percent = session.begin("aaos.fuel.percent",
+                "AAOS 계산 · FUEL_LEVEL / INFO_FUEL_CAPACITY × 100", "%", false);
+        CarPropertyManager manager = properties;
+        if (manager == null) {
+            for (DiagnosticSession.Request request : new DiagnosticSession.Request[]{level, capacity, percent}) {
+                request.status("연결 안 됨", "CarPropertyManager 없음");
+            }
+            return;
+        }
+        io.execute(() -> {
+            if (closed) return;
+            CarPropertyValue<?> levelValue = readAndPublish(manager, VehiclePropertyIds.FUEL_LEVEL, level);
+            CarPropertyValue<?> capacityValue = readAndPublish(manager, VehiclePropertyIds.INFO_FUEL_CAPACITY, capacity);
+            if (levelValue == null || capacityValue == null) {
+                percent.status("계산 불가", "표준 연료 잔량·탱크 용량을 모두 수신해야 계산할 수 있음");
+                return;
+            }
+            try {
+                double ratio = FuelLevelPercent.calculate(levelValue.getValue(), capacityValue.getValue());
+                percent.dispatch(() -> {
+                    percent.access("READ · 계산값 · sensor timestamps(ns since boot)="
+                            + levelValue.getTimestamp() + "/" + capacityValue.getTimestamp());
+                    percent.value(ratio);
+                });
+            } catch (IllegalArgumentException error) {
+                percent.status("값 오류", "잔량·용량의 수치 범위 확인 필요 · 용량 0/유효하지 않은 값은 계산하지 않음");
+            }
+        });
+    }
+
+    public void readEvAll(DiagnosticSession session) {
+        readEvBattery(session);
+        readOdometer(session);
+    }
+
+    public void readEvBattery(DiagnosticSession session) {
+        read(session, "aaos.ev.energy", VehiclePropertyIds.EV_BATTERY_LEVEL, "Wh");
+        read(session, "aaos.ev.usable", VehiclePropertyIds.EV_CURRENT_BATTERY_CAPACITY, "Wh");
+        read(session, "aaos.ev.nominal", VehiclePropertyIds.INFO_EV_BATTERY_CAPACITY, "Wh");
+    }
+
+    public void readEnergyAll(DiagnosticSession session) {
+        readFuel(session);
+        readEvBattery(session);
+        readOdometer(session);
+    }
+
+    public void readOdometer(DiagnosticSession session) {
         read(session, "aaos.odometer", VehiclePropertyIds.PERF_ODOMETER, "km");
     }
 
@@ -87,30 +150,39 @@ public final class AaosVehicleDiagnosticService {
         }
         io.execute(() -> {
             if (closed) return;
-            try {
-                CarPropertyConfig<?> config = manager.getCarPropertyConfig(propertyId);
-                if (config == null) {
-                    request.status("설정 없음", "미지원 또는 현재 권한으로 설정이 노출되지 않음");
-                    return;
-                }
-                int access = config.getAccess();
-                if (access != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ
-                        && access != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ_WRITE) {
-                    request.status("읽기 불가", "property access=" + access);
-                    return;
-                }
-                CarPropertyValue<?> value = manager.getProperty(propertyId, 0);
-                if (value == null) { request.value(null); return; }
-                if (value.getStatus() != CarPropertyValue.STATUS_AVAILABLE) {
-                    request.status("현재 사용 불가", "property status=" + value.getStatus());
-                    return;
-                }
-                request.dispatch(() -> {
-                    request.access("READ · sensor timestamp(ns since boot)=" + value.getTimestamp());
-                    request.value(value.getValue());
-                });
-            } catch (RuntimeException error) { request.fail(error); }
+            readAndPublish(manager, propertyId, request);
         });
+    }
+
+    private CarPropertyValue<?> readAndPublish(CarPropertyManager manager, int propertyId,
+                                               DiagnosticSession.Request request) {
+        try {
+            CarPropertyConfig<?> config = manager.getCarPropertyConfig(propertyId);
+            if (config == null) {
+                request.status("설정 없음", "미지원 또는 현재 권한으로 설정이 노출되지 않음");
+                return null;
+            }
+            int access = config.getAccess();
+            if (access != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ
+                    && access != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ_WRITE) {
+                request.status("읽기 불가", "property access=" + access);
+                return null;
+            }
+            CarPropertyValue<?> value = manager.getProperty(propertyId, 0);
+            if (value == null) { request.value(null); return null; }
+            if (value.getStatus() != CarPropertyValue.STATUS_AVAILABLE) {
+                request.status("현재 사용 불가", "property status=" + value.getStatus());
+                return null;
+            }
+            request.dispatch(() -> {
+                request.access("READ · sensor timestamp(ns since boot)=" + value.getTimestamp());
+                request.value(value.getValue());
+            });
+            return value;
+        } catch (RuntimeException error) {
+            request.fail(error);
+            return null;
+        }
     }
 
     public void close() {
