@@ -81,6 +81,17 @@ public final class DiagnosticActivity extends AppCompatActivity {
         if (activeTab < TAB_FUEL || activeTab > TAB_INFO) activeTab = TAB_FUEL;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        com.google.android.material.button.MaterialButton back =
+                new com.google.android.material.button.MaterialButton(this, null,
+                        com.google.android.material.R.attr.borderlessButtonStyle);
+        back.setText("←  차량 화면으로");
+        back.setAllCaps(false);
+        back.setTextSize(16);
+        back.setMinHeight(dp(56));
+        back.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        back.setContentDescription("차량 화면으로 돌아가기");
+        back.setOnClickListener(view -> finish());
+        root.addView(back, new LinearLayout.LayoutParams(-1, dp(56)));
         TabLayout tabs = new TabLayout(this);
         tabs.setTag("diagnostic.tabs");
         tabs.setTabMode(TabLayout.MODE_AUTO);

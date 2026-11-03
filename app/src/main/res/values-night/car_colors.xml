@@ -1,0 +1,13 @@
+<resources>
+    <color name="car_background">#121A12</color>
+    <color name="car_panel">#1D291C</color>
+    <color name="car_foreground">#F0F8EC</color>
+    <color name="car_muted">#BDCCB8</color>
+    <color name="car_line">#4D6249</color>
+    <color name="car_accent">#80CE65</color>
+    <color name="car_accent_mid">#80CE65</color>
+    <color name="car_accent_light">#365632</color>
+    <color name="car_link">#A0DB8B</color>
+    <color name="car_on_accent">#142412</color>
+    <color name="car_soft">#293B27</color>
+</resources>

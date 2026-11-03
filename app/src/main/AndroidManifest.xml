@@ -42,6 +42,10 @@
         </activity>
         <activity
             android:name=".DiagnosticActivity"
+            android:exported="false" />
+        <activity
+            android:name=".CarHomeActivity"
+            android:theme="@style/Theme.Fuelog.Car"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

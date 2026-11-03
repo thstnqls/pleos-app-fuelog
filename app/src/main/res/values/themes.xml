@@ -13,4 +13,12 @@
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
         <!-- Customize your theme here. -->
     </style>
+    <style name="Theme.Fuelog.Car" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/car_accent</item>
+        <item name="colorOnPrimary">@color/car_on_accent</item>
+        <item name="colorSecondary">@color/car_accent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@color/car_background</item>
+        <item name="android:navigationBarColor">@color/car_panel</item>
+    </style>
 </resources>
