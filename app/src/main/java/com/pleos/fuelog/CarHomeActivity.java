@@ -36,12 +36,43 @@ public final class CarHomeActivity extends AppCompatActivity {
     private Button headerNavigation;
     private AaosVehicleDiagnosticService restrictions;
     private boolean allowed;
-    private int page = HOME;
+    private int page = CONNECT;
+    private com.pleos.fuelog.connection.ConnectionSession connection;
+    private final android.os.Handler connectionHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean started;
+    private com.pleos.fuelog.home.TripUserSession tripUser;
+    private String userOperation = java.util.UUID.randomUUID().toString();
+    private com.pleos.fuelog.home.HomeRecorder recorder;
+    private final Runnable connectionTick = new Runnable() {
+        public void run() {
+            if (!started) return;
+            if (allowed && page == CONNECT) {
+                connection.refresh(online(), () -> {
+                    if (!started || !allowed) return;
+                    if (connection.linked) page = connection.state.equals("ALREADY_LINKED") ? SETTINGS : USER;
+                    render();
+                });
+                if (connection.linked) page = connection.state.equals("ALREADY_LINKED") ? SETTINGS : USER;
+                render();
+            }
+            if (allowed && page == USER && !tripUser.busy) render();
+            connectionHandler.postDelayed(this, 1000);
+        }
+    };
+    private boolean online() {
+        android.net.ConnectivityManager manager = getSystemService(android.net.ConnectivityManager.class);
+        android.net.NetworkCapabilities caps = manager.getNetworkCapabilities(manager.getActiveNetwork());
+        return caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    }
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (state != null) page = state.getInt("page", HOME);
+        connection = com.pleos.fuelog.connection.ConnectionSession.get(this);
+        if (!connection.linked) page = CONNECT;
+        tripUser = new com.pleos.fuelog.home.TripUserSession(connection);
+        recorder = new com.pleos.fuelog.home.HomeRecorder(this);
         buildShell();
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
@@ -101,6 +132,9 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     @Override protected void onStart() {
         super.onStart();
+        started = true;
+        recorder.resume(() -> { if (started && allowed && page == HOME) render(); });
+        connectionHandler.post(connectionTick);
         allowed = false;
         render();
         restrictions = new AaosVehicleDiagnosticService(this);
@@ -108,7 +142,8 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (isFinishing() || isDestroyed()) return;
             boolean wasAllowed = allowed;
             allowed = canUse;
-            if (!canUse || !wasAllowed) page = HOME;
+            if (!canUse) tripUser.cancel();
+            if (!canUse || !wasAllowed) page = connection.linked ? HOME : CONNECT;
             status.setText(canUse ? "우리 차 · 정차 상태" : "주행 제한");
             status.setBackground(shape(canUse ? R.color.car_accent_light : R.color.car_soft, 4, 0));
             render();
@@ -116,6 +151,10 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     @Override protected void onStop() {
+        started = false;
+        recorder.pause();
+        tripUser.cancel();
+        connectionHandler.removeCallbacks(connectionTick);
         allowed = false;
         if (restrictions != null) { restrictions.close(); restrictions = null; }
         super.onStop();
@@ -128,8 +167,10 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private void navigate(int destination) {
         if (!allowed) return;
-        page = destination;
+        if (destination != USER) tripUser.cancel();
+        page = !connection.linked && destination != SETTINGS ? CONNECT : destination;
         render();
+        if (page == USER) loadUserCandidates();
     }
 
     private void render() {
@@ -153,6 +194,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             case CONNECT: renderConnect(); break;
             default: renderHome();
         }
+        if (!connection.linked) return;
         for (int i = 0; i < navPages.length; i++) {
             final int destination = navPages[i];
             Button tab = headerAction(navLabels[i], () -> navigate(destination));
@@ -169,83 +211,111 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
     }
 
+    private String timeLabel(long timestamp) {
+        return timestamp == 0 ? "아직 없음" : new java.text.SimpleDateFormat("MM.dd HH:mm:ss", java.util.Locale.KOREA)
+                .format(new java.util.Date(timestamp));
+    }
+
     private void renderHome() {
-        tag(body, "이번 운행  ·  화면 시안");
-        heading(body, "운행 사용자를 확인해 주세요");
-        paragraph(body, "휴대폰을 연결해 이번 운행의 계정을 선택하세요.");
-        primary(body, "사용자 확인  →", () -> navigate(USER));
-        sectionLabel(body, "최근 운행과 확인할 항목");
-        LinearLayout grid = grid(body);
-        LinearLayout trip = card(grid);
-        tag(trip, "최근 운행  ·  예시 데이터");
-        number(trip, "60.0", " km");
-        detail(trip, "추정 연료비", "6,800원");
-        detail(trip, "소모 연료", "4.0L");
-        link(trip, "운행 요약 보기", () -> navigate(TRIP));
-        LinearLayout side = column();
-        grid.addView(side, gridCell());
-        sectionLabel(side, "확인할 항목");
-        subheading(side, "주유 기록 1건");
-        paragraph(side, "휴대폰에서 금액 확인 · 예시");
-        link(side, "주유 요약", () -> navigate(FUEL));
-        sectionLabel(side, "다음 정비");
-        subheading(side, "엔진오일");
-        paragraph(side, "설정한 주기까지 1,200km · 예시");
-        link(side, "정비 요약", () -> navigate(MAINTENANCE));
+        com.pleos.fuelog.home.TripState trip = recorder.trip;
+        tag(body, "연결된 차량 · 별칭 미설정");
+        heading(body, recorder.owner.isEmpty() ? "이번 운행 사용자를 확인하세요" : recorder.displayUser());
+        paragraph(body, "현재 사용자 · " + recorder.displayUser());
+        link(body, "사용자 확인", () -> navigate(USER));
+        LinearLayout layout = grid(body);
+        LinearLayout current = card(layout);
+        tag(current, connection.linked ? trip.status(System.currentTimeMillis()) : "연결 필요");
+        subheading(current, "이번 운행 · 앱 기록 구간");
+        if (trip.sampledAt == 0) paragraph(current, "거리 수신 대기");
+        else number(current, String.format(java.util.Locale.KOREA, "%.1f", trip.distance), " km");
+        paragraph(current, "마지막 샘플 · 최근 수신 " + timeLabel(trip.sampledAt));
+        paragraph(current, "추정 비용 · 사용자 확인 후 제공");
+        paragraph(current, "연료 데이터 미연결 · 거리 기록은 별도로 제공됩니다");
+        primary(current, trip.active ? "기록 종료" : "기록 시작", () -> {
+            if (allowed && connection.linked) recorder.toggle();
+        });
+        paragraph(current, "직접 시작·종료한 앱 기록 구간입니다. 화면을 벗어나면 수집이 중단되어 일부 누락으로 표시됩니다.");
+        LinearLayout alerts = section(layout);
+        subheading(alerts, "확인할 항목");
+        paragraph(alerts, "필요한 알림 · 사용자 확인 후 조회");
+        link(alerts, "주유 확인", () -> navigate(FUEL));
+        link(alerts, "정비 예정", () -> navigate(MAINTENANCE));
+        paragraph(body, (online() ? "서버 동기화 대기" : "오프라인 · 로컬 기록")
+                + " · 로컬 저장 " + timeLabel(trip.savedAt));
+        if (!compact()) {
+            LinearLayout footer = grid(body);
+            link(section(footer), "운행 요약", () -> navigate(TRIP));
+            link(section(footer), "연결 상태", () -> navigate(SETTINGS));
+        } else link(body, "운행 요약 및 상세", () -> navigate(TRIP));
     }
 
     private void renderUser() {
         heading(body, "이번 운행은 누가 기록하나요?");
-        sectionLabel(body, "연결 상태");
-        LinearLayout card = section(body);
-        subheading(card, "연결된 휴대폰 없음");
-        paragraph(card, "인증된 휴대폰과 차량 멤버십을 확인한 뒤 사용할 수 있어요.");
-        Button confirm = button("이번 운행에 사용", true, null);
-        confirm.setEnabled(false);
+        paragraph(body, tripUser.message);
+        if (!online()) paragraph(body, "오프라인 · 사용자 전환을 보류합니다");
+        for (com.pleos.fuelog.home.TripUserSession.Candidate candidate : tripUser.candidates) {
+            Button choice = button((candidate.id.equals(tripUser.selected) ? "✓ " : "") + candidate.name
+                    + " · 차량 멤버", false, () -> {
+                if (!allowed || tripUser.busy || !candidate.valid()) return;
+                tripUser.selected = candidate.id;
+                userOperation = java.util.UUID.randomUUID().toString(); render();
+            });
+            choice.setEnabled(candidate.valid() && !tripUser.busy && online());
+            body.addView(choice, fullButton());
+            paragraph(body, "확인 만료까지 " + Math.max(0, (candidate.deadline - android.os.SystemClock.elapsedRealtime()) / 1000) + "초");
+        }
+        Button confirm = button(tripUser.busy ? "확인 중" : "이번 운행에 사용", true, () -> {
+            if (!allowed || !online()) return;
+            if (recorder.trip.active) {
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("현재 구간을 종료하고 사용자를 확인할까요?")
+                        .setMessage("기존 기록 소유자는 유지됩니다. 종료 후 새 구간에 대한 모바일 동의가 필요합니다.")
+                        .setNegativeButton("취소", null)
+                        .setPositiveButton("구간 종료 및 새 구간 준비", (dialog, which) -> {
+                            if (!allowed || !started || !online()) return;
+                            try { recorder.endForSwitch(); loadUserCandidates(); }
+                            catch (Exception e) { tripUser.message = "기록 저장 실패 · 사용자 전환 보류"; render(); }
+                        }).show();
+            } else {
+                tripUser.confirm(recorder.intervalId, userOperation, (subject, name, expiry) -> {
+                    if (!allowed || !started || !online() || page != USER) throw new IllegalStateException();
+                    recorder.assignUser(subject, name, expiry);
+                    page = HOME;
+                }, () -> { if (started && allowed) render(); });
+                render();
+            }
+        });
+        confirm.setEnabled(online() && !tripUser.busy && tripUser.selection() != null);
         body.addView(confirm, fullButton());
-        link(body, "휴대폰 연결", () -> navigate(CONNECT));
+        link(body, "인증된 후보 새로 확인", this::loadUserCandidates);
+        link(body, "휴대폰으로 연결", () -> new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("휴대폰으로 연결")
+                .setMessage("휴대폰 fuelog 앱에서 연결된 차량을 열고 이번 운행 사용에 동의해 주세요.")
+                .setPositiveButton("후보 확인", (dialog, which) -> loadUserCandidates()).show());
+    }
+
+    private void loadUserCandidates() {
+        if (!allowed || !started || !online() || tripUser.busy) return;
+        tripUser.load(recorder.intervalId, () -> { if (started && allowed && page == USER) render(); });
+        render();
     }
 
     private void renderTrip() {
-        heading(body, "최근 운행");
-        tag(body, "비공개  /  추정  /  예시 데이터");
-        LinearLayout grid = grid(body);
-        LinearLayout distance = section(grid);
-        number(distance, "60.0", " km");
-        paragraph(distance, "10월 31일 · 10:00–11:05");
-        LinearLayout detail = section(grid);
-        detail(detail, "추정 연료비", "6,800원");
-        detail(detail, "소모 연료", "4.0L");
-        detail(detail, "추정 연비", "15.0km/L");
-        paragraph(body, "실제 운행 기록은 아직 연결되지 않았습니다. 상세 확인은 모바일 앱에서 제공할 예정입니다.");
+        heading(body, "운행 요약");
+        paragraph(body, "개인 운행 내역은 휴대폰에서 사용자를 확인한 뒤 제공됩니다.");
+        link(body, "사용자 확인", () -> navigate(USER));
     }
 
     private void renderFuel() {
-        heading(body, "주유 기록 확인이 필요해요");
-        tag(body, "자동 감지  /  추정  /  예시 데이터");
-        LinearLayout grid = grid(body);
-        LinearLayout amount = section(grid);
-        number(amount, "20.0", " L");
-        paragraph(amount, "추정 금액 34,000원");
-        LinearLayout station = section(grid);
-        subheading(station, "주유소 후보");
-        paragraph(station, "예시 주유소");
-        paragraph(station, "휘발유 · 게시 단가 1,700원/L");
-        paragraph(body, "실제 주유소와 결제 금액은 모바일에서 확인해야 합니다.");
+        heading(body, "주유 확인");
+        paragraph(body, "주유 내역과 지출은 휴대폰에서 사용자를 확인한 뒤 제공됩니다.");
+        link(body, "사용자 확인", () -> navigate(USER));
     }
 
     private void renderMaintenance() {
-        heading(body, "차량 관리");
-        LinearLayout grid = grid(body);
-        LinearLayout distance = section(grid);
-        paragraph(distance, "최근 수신 누적거리 · 예시 데이터");
-        number(distance, "50,800", " km");
-        paragraph(distance, "10월 31일 11:05 기준");
-        LinearLayout service = section(grid);
-        subheading(service, "엔진오일");
-        paragraph(service, "다음 정비 52,000km");
-        paragraph(service, "사용자가 설정한 주기 · 예시 데이터");
-        paragraph(body, "정비 기록과 주기 변경은 모바일 앱에서 제공합니다.");
+        heading(body, "정비 예정");
+        paragraph(body, "정비 알림은 휴대폰에서 사용자를 확인한 뒤 제공됩니다.");
+        link(body, "사용자 확인", () -> navigate(USER));
     }
 
     private void renderSettings() {
@@ -261,12 +331,30 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private void renderConnect() {
         heading(body, "휴대폰으로 차량을 연결하세요");
-        LinearLayout qr = section(body);
-        qr.setGravity(Gravity.CENTER);
-        qr.setMinimumHeight(dp(180));
-        subheading(qr, "연결 QR 준비 중");
-        paragraph(qr, "발급된 코드가 없습니다");
-        paragraph(body, "fuelog 모바일 앱에서 차량 등록을 선택하세요. 연결 기능은 아직 준비 중입니다.");
+        if (!online()) { paragraph(body, "인터넷 연결이 필요합니다. 네트워크를 확인해 주세요."); return; }
+        if (connection.linked) { link(body, "이미 연결된 기기 · 연결 설정", () -> navigate(SETTINGS)); return; }
+        if (connection.state.equals("WAITING") && connection.remaining() > 0) {
+            LinearLayout layout = grid(body);
+            LinearLayout qr = section(layout);
+            try {
+                com.google.zxing.common.BitMatrix matrix = new com.google.zxing.qrcode.QRCodeWriter().encode(
+                        connection.payload, com.google.zxing.BarcodeFormat.QR_CODE, 320, 320);
+                android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(320, 320, android.graphics.Bitmap.Config.ARGB_8888);
+                for (int y = 0; y < 320; y++) for (int x = 0; x < 320; x++) bitmap.setPixel(x, y, matrix.get(x, y) ? android.graphics.Color.BLACK : android.graphics.Color.WHITE);
+                android.widget.ImageView image = new android.widget.ImageView(this);
+                image.setImageBitmap(bitmap);
+                image.setContentDescription("모바일 fuelog 앱으로 스캔할 차량 연결 QR");
+                qr.addView(image, new LinearLayout.LayoutParams(dp(240), dp(240)));
+            } catch (Exception e) { paragraph(qr, "QR 표시 실패 · 코드를 다시 받아 주세요"); }
+            paragraph(qr, "남은 시간 " + connection.remaining() + "초 · 연결 대기 중");
+            LinearLayout steps = section(layout);
+            paragraph(steps, "1. 휴대폰 fuelog 앱 열기\n2. 차량 등록에서 QR 스캔\n3. 로그인 후 차량 확인");
+            paragraph(steps, "요청 " + connection.requestId);
+        } else {
+            paragraph(body, connection.state.equals("EXPIRED") ? "연결 코드가 만료되었습니다" :
+                    connection.message.isEmpty() ? "연결 QR 준비 중" : connection.message);
+            primary(body, "코드 다시 받기", () -> connection.retry(() -> { if (started && allowed) render(); }));
+        }
     }
 
     private LinearLayout grid(LinearLayout parent) {
