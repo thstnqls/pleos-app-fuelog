@@ -20,6 +20,9 @@ public final class ConnectionSession {
     }
     public String state = "IDLE", requestId = "", payload = "", message = "";
     public boolean linked;
+    private boolean serverVerified;
+    public boolean isPreview() { return !serverVerified; }
+    public boolean hasServer() { return api != null; }
     private long deadline;
     private boolean busy;
     private String operation;
@@ -44,6 +47,18 @@ public final class ConnectionSession {
     public okhttp3.Call requestUser(String path, String body, ApiClient.ResultCallback callback) {
         if (api == null || !linked) throw new IllegalStateException("Vehicle connection required");
         return api.create(path, body, credential, callback);
+    }
+    public okhttp3.Call readVehicle(String path, ApiClient.ResultCallback callback) {
+        if (api == null || !linked) throw new IllegalStateException("Vehicle connection required");
+        return api.read(path, null, credential, callback);
+    }
+    public okhttp3.Call manage(String path, String body, ApiClient.ResultCallback callback) {
+        if (api == null) throw new IllegalStateException("Server unavailable");
+        return api.create(path, body, credential, callback);
+    }
+    public void registrationReset() throws Exception {
+        operation = UUID.randomUUID().toString(); persist();
+        linked = false; state = "IDLE"; requestId = ""; payload = ""; deadline = 0;
     }
     public long remaining() { return Math.max(0, (deadline - SystemClock.elapsedRealtime() + 999) / 1000); }
     public void refresh(boolean online, Runnable changed) {
@@ -73,12 +88,15 @@ public final class ConnectionSession {
                         busy = false;
                         try {
                             JSONObject value = new JSONObject(response.getBody());
+                            ConnectionResponse.validate(value);
                             String next = value.getString("status");
                             String id = value.getString("requestId");
+                            if (id.trim().isEmpty()) throw new IllegalArgumentException();
                             if (path.endsWith("/status") && !requestId.equals(id)) throw new IllegalArgumentException();
                             if (!java.util.Arrays.asList("WAITING", "EXPIRED", "REVOKED", "COMPLETED", "ALREADY_LINKED").contains(next)) throw new IllegalArgumentException();
                             payload = "";
                             if (next.equals("WAITING")) {
+                                if (value.getString("nonce").trim().isEmpty()) throw new IllegalArgumentException();
                                 long ttl = value.getLong("remainingSeconds");
                                 if (ttl <= 0 || ttl > 120) throw new IllegalArgumentException();
                                 long candidate = SystemClock.elapsedRealtime() + ttl * 1000;
@@ -88,6 +106,7 @@ public final class ConnectionSession {
                                         .put("requestId", id).put("nonce", value.getString("nonce")).toString();
                             }
                             requestId = id; state = next; message = "";
+                            serverVerified = true;
                             linked = next.equals("COMPLETED") || next.equals("ALREADY_LINKED");
                         } catch (Exception e) { state = "ERROR"; payload = ""; message = "연결 응답을 확인하지 못했습니다"; }
                         changed.run();

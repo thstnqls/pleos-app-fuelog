@@ -110,6 +110,10 @@ public final class SupabaseAuth {
     }
 
     /** Always clears local state first. A failed server revocation is reported to the caller. */
+    public void clearLocal(Callback<Void> callback) {
+        submit(() -> { save(new JSONObject()); return null; }, callback);
+    }
+
     public void signOut(Callback<Void> callback) {
         submit(() -> {
             JSONObject state = readState();

@@ -16,6 +16,13 @@ public final class AuthModule {
     private static SupabaseAuth instance;
 
     private AuthModule() {}
+    public static synchronized void clearLocal(Context context, SupabaseAuth.Callback<Void> callback) {
+        if (instance != null) { instance.clearLocal(callback); return; }
+        new Thread(() -> {
+            try { new EncryptedAuthStore(context.getApplicationContext()).write("{}"); callback.onSuccess(null); }
+            catch (java.io.IOException e) { callback.onError(e); }
+        }, "clear-local-auth").start();
+    }
 
     public static synchronized SupabaseAuth get(Context context) {
         if (instance == null) {

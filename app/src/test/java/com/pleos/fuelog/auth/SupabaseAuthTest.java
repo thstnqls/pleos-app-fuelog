@@ -47,6 +47,20 @@ public class SupabaseAuthTest {
         server.shutdown();
     }
 
+    @Test public void localDisconnectClearsTokensAndPendingLoginWithoutNetwork() throws Exception {
+        store.value = new JSONObject().put("session", new JSONObject().put("access_token", "old")
+                .put("refresh_token", "old-refresh")).put("verifier", "pending-login").toString();
+        Result<Void> result = new Result<>();
+        auth.clearLocal(result);
+        result.value();
+        assertFalse(new JSONObject(store.value).has("session"));
+        assertFalse(new JSONObject(store.value).has("verifier"));
+        assertEquals(0, server.getRequestCount());
+        auth = client();
+        assertFalse(new JSONObject(store.value).has("session"));
+        assertFalse(new JSONObject(store.value).has("verifier"));
+    }
+
     @Test public void pkceChallengeMatchesRfc7636Vector() {
         assertEquals("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
                 SupabaseAuth.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));

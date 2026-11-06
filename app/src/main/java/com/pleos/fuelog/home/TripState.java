@@ -5,8 +5,9 @@ public final class TripState {
     public boolean active, missing;
     public double distance;
     public long sampledAt, savedAt;
+    public int sampleCount;
     private double previous = Double.NaN;
-    public void start() { active = true; missing = false; distance = 0; sampledAt = 0; previous = Double.NaN; }
+    public void start() { active = true; sampleCount = 0; missing = false; distance = 0; sampledAt = 0; previous = Double.NaN; }
     public void interrupt() { if (active) missing = true; previous = Double.NaN; }
     public void stop() { active = false; previous = Double.NaN; }
     public void sample(double km, long now) {
@@ -16,7 +17,7 @@ public final class TripState {
             if (km >= previous) distance += km - previous;
             else missing = true;
         }
-        previous = km; sampledAt = now;
+        previous = km; sampledAt = now; sampleCount++;
     }
     public String status(long now) {
         if (!active) return "기록 준비";
