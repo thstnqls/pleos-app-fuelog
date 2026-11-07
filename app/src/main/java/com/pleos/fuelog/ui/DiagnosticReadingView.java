@@ -26,12 +26,16 @@ public final class DiagnosticReadingView extends LinearLayout {
     private final int foreground;
     private String state = "미조회";
 
+    public DiagnosticReadingView(Context context) {
+        this(context, "", "");
+    }
+
     public DiagnosticReadingView(Context context, String label, String api) {
         super(context);
         this.api = api;
         setOrientation(VERTICAL);
         setPadding(0, dp(12), 0, dp(12));
-        foreground = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface);
+        foreground = MaterialColors.getColor(this, R.attr.colorOnSurface);
 
         LinearLayout header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -51,7 +55,7 @@ public final class DiagnosticReadingView extends LinearLayout {
         detail = text("", 12);
         addView(detail);
         metadata = text(api, 11);
-        int surface = MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface);
+        int surface = MaterialColors.getColor(this, R.attr.colorSurface);
         metadata.setTextColor(ColorUtils.blendARGB(surface, foreground, 0.68f));
         addView(metadata);
         reset();
@@ -78,8 +82,8 @@ public final class DiagnosticReadingView extends LinearLayout {
         reading.setTextColor(foreground);
         detail.setText(received ? "" : payload);
         detail.setVisibility(received ? GONE : VISIBLE);
-        metadata.setText(api + "\n" + source + access + " · "
-                + DateFormat.getTimeInstance().format(new Date(receivedAt)));
+        metadata.setText(getContext().getString(R.string.diagnostic_reading_metadata,
+                api, source, access, DateFormat.getTimeInstance().format(new Date(receivedAt))));
     }
 
     private void renderBadge(String state) {
@@ -99,7 +103,7 @@ public final class DiagnosticReadingView extends LinearLayout {
             backgroundColor = ContextCompat.getColor(getContext(), R.color.diagnostic_error_background);
         } else {
             textColor = foreground;
-            int surface = MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface);
+            int surface = MaterialColors.getColor(this, R.attr.colorSurface);
             backgroundColor = ColorUtils.blendARGB(surface, foreground, 0.08f);
         }
         GradientDrawable background = new GradientDrawable();

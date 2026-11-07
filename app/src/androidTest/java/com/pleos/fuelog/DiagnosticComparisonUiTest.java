@@ -18,6 +18,22 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class DiagnosticComparisonUiTest {
+    @Test public void standardConstructorCreatesAUsableReadingView() {
+        try (ActivityScenario<DiagnosticActivity> scenario = ActivityScenario.launch(DiagnosticActivity.class)) {
+            scenario.onActivity(activity -> {
+                DiagnosticReadingView row = new DiagnosticReadingView(activity);
+                assertEquals("미조회", row.getReadingState());
+                row.render("SDK", "수신", "12.5 km · 접근 READ", 1);
+                assertEquals("수신", row.getReadingState());
+                assertTrue(texts(row).contains("12.5 km"));
+                assertTrue(texts(row).stream().anyMatch(text -> text.contains("SDK · 접근 READ · ")));
+                row.reset();
+                assertEquals("미조회", row.getReadingState());
+                assertFalse(texts(row).contains("12.5 km"));
+            });
+        }
+    }
+
     @Test public void driveTabContainsThirteenIndependentQueriesAndSurvivesRecreation() {
         try (ActivityScenario<DiagnosticActivity> scenario = ActivityScenario.launch(DiagnosticActivity.class)) {
             scenario.onActivity(activity -> {

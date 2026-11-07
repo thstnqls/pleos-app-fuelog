@@ -28,20 +28,6 @@
         <uses-library android:name="android.car" android:required="false" />
         <uses-library android:name="ai.pleos.playground.car" android:required="false" />
         <activity
-            android:name=".auth.AuthActivity"
-            android:exported="true"
-            android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="com.pleos.fuelog"
-                    android:host="login-callback"
-                    android:path="/" />
-            </intent-filter>
-        </activity>
-        <activity
             android:name=".DiagnosticActivity"
             android:exported="false" />
         <activity

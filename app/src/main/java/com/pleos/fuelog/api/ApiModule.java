@@ -1,11 +1,6 @@
 package com.pleos.fuelog.api;
 
-import android.content.Context;
-
 import com.pleos.fuelog.BuildConfig;
-import com.pleos.fuelog.auth.AuthModule;
-import com.pleos.fuelog.auth.AuthInterceptor;
-import com.pleos.fuelog.auth.SupabaseAuth;
 
 import okhttp3.HttpUrl;
 
@@ -15,13 +10,6 @@ public final class ApiModule {
 
     public static ApiClient create() {
         return new ApiClient(baseUrl());
-    }
-
-    /** Uses the current session, refreshing before requests. Missing login fails without sending. */
-    public static ApiClient createAuthenticated(Context context) {
-        String baseUrl = baseUrl();
-        SupabaseAuth auth = AuthModule.get(context);
-        return new ApiClient(baseUrl, ApiClient.clientBuilder().addInterceptor(new AuthInterceptor(auth)).build());
     }
 
     private static String baseUrl() {

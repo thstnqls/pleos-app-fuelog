@@ -1,6 +1,5 @@
 package com.pleos.fuelog;
 
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
 import android.graphics.Typeface;
@@ -19,7 +18,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.pleos.fuelog.diagnostics.AaosVehicleDiagnosticService;
-import com.pleos.fuelog.auth.AuthActivity;
 import com.pleos.fuelog.diagnostics.CarInfoDiagnosticService;
 import com.pleos.fuelog.diagnostics.DiagnosticSession;
 import com.pleos.fuelog.diagnostics.DriveDiagnosticService;
@@ -48,7 +46,6 @@ public final class DiagnosticActivity extends AppCompatActivity {
     private final List<Button> actions = new ArrayList<>();
     private TextView connection;
     private TextView summary;
-    private Button login;
     private Button primaryQuery;
     private LinearLayout readings;
     private LinearLayout fuelPage;
@@ -69,6 +66,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     private LocationDiagnosticService location;
     private AaosVehicleDiagnosticService aaos;
 
+    // 1. 진단 화면 진입: 탭 복원 → 차량 서비스 연결 → 정차 상태 확인.
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setTitle(R.string.diagnostic_title);
@@ -83,7 +81,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         root.setOrientation(LinearLayout.VERTICAL);
         com.google.android.material.button.MaterialButton back =
                 new com.google.android.material.button.MaterialButton(this, null,
-                        com.google.android.material.R.attr.borderlessButtonStyle);
+                        R.attr.borderlessButtonStyle);
         back.setText("←  차량 화면으로");
         back.setAllCaps(false);
         back.setTextSize(16);
@@ -126,10 +124,6 @@ public final class DiagnosticActivity extends AppCompatActivity {
         LinearLayout connectionActions = actionRow(status);
         Button reconnect = button(connectionActions, "연결 재시도", this::reconnect);
         reconnect.setContentDescription("차량 서비스 연결과 UX 제한 다시 확인");
-        login = button(connectionActions, "Fuelog 로그인", () -> {
-            if (started && allowed) startActivity(new Intent(this, AuthActivity.class));
-        });
-        login.setEnabled(false);
         readings = new LinearLayout(this);
         readings.setOrientation(LinearLayout.VERTICAL);
         content.addView(readings);
@@ -157,6 +151,59 @@ public final class DiagnosticActivity extends AppCompatActivity {
         setActionsEnabled(false);
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        started = true;
+        reconnect();
+    }
+
+    private void reconnect() {
+        if (!started) return;
+        closeMeasurements();
+        if (aaos != null) aaos.close();
+        aaos = new AaosVehicleDiagnosticService(this);
+        aaos.start((canUse, detail) -> {
+            if (!started) return;
+            connection.setText(detail);
+            allowed = canUse;
+            if (canUse && session == null) openMeasurements();
+            if (!canUse) closeMeasurements();
+            setActionsEnabled(canUse && session != null);
+        });
+    }
+
+    private void openMeasurements() {
+        resetRows();
+        session = new DiagnosticSession((key, source, state, value, time) -> {
+            DiagnosticReadingView row = rows.get(key);
+            if (row == null) { addRow(readings, key, key, source); row = rows.get(key); }
+            row.render(source, state, value, time);
+            updateSummary();
+        });
+        try {
+            vehicle = new Vehicle(this);
+            vehicle.initialize();
+            fuel = new FuelDiagnosticService(vehicle.getFuel(), session);
+            evBattery = new EvBatteryDiagnosticService(vehicle.getEvBattery(), session);
+            odometer = new OdometerDiagnosticService(vehicle.getOdometer(), session);
+            drive = new DriveDiagnosticService(vehicle.getDrivingMode(), vehicle.getOdometer(),
+                    vehicle.getBrake(), vehicle.getSteeringWheel(), session);
+            carInfo = new CarInfoDiagnosticService(vehicle.getCarInfo(), session);
+            location = new LocationDiagnosticService(this, session);
+            connection.append("\nVehicle 초기화 요청됨 · 조회 응답으로 기능별 연결 확인");
+        } catch (RuntimeException error) {
+            closeMeasurements();
+            connection.append("\nVehicle 초기화 오류: " + error.getClass().getSimpleName());
+        }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putInt("diagnostic.category", activeTab);
+        outState.putString("location.permission.key", requestedLocationKey);
+        super.onSaveInstanceState(outState);
+    }
+
+    // 2. 진단 대상 선택: 탭을 바꾸어도 자동 조회하지 않는다.
     private void showSelectedPage() {
         fuelPage.setVisibility(activeTab == TAB_FUEL ? View.VISIBLE : View.GONE);
         evPage.setVisibility(activeTab == TAB_EV ? View.VISIBLE : View.GONE);
@@ -168,57 +215,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         updateSummary();
     }
 
-    private LinearLayout page(String tag) {
-        LinearLayout page = new LinearLayout(this);
-        page.setOrientation(LinearLayout.VERTICAL);
-        page.setTag(tag);
-        readings.addView(page);
-        return page;
-    }
-
-    @Override protected void onSaveInstanceState(Bundle outState) {
-        outState.putInt("diagnostic.category", activeTab);
-        outState.putString("location.permission.key", requestedLocationKey);
-        super.onSaveInstanceState(outState);
-    }
-
-    private void buildDrivePage() {
-        LinearLayout state = card(drivePage, "주행 상태", "CAR_DRIVE · 브레이크 true=눌림, false=떼짐\n조향각은 전륜 기준이며 왼쪽은 음수입니다.");
-        addDriveRows(state, Reading.MODE, Reading.CRUISE_SPEED, Reading.BRAKE,
-                Reading.CRUISE_STATE, Reading.STEERING);
-        LinearLayout distance = card(drivePage, "거리", "총 누적거리는 km, Trip 통계 거리는 m입니다. 각각 별도 API로 조회합니다.");
-        addDriveRows(distance, Reading.ODOMETER, Reading.TRIP_CUMULATIVE_DISTANCE,
-                Reading.TRIP_CURRENT_DISTANCE, Reading.TRIP_INSTANT_DISTANCE, Reading.TRIP_REFILL_DISTANCE);
-        LinearLayout time = card(drivePage, "주행 시간", "SDK 원값 · 분 단위");
-        addDriveRows(time, Reading.TRIP_CUMULATIVE_TIME, Reading.TRIP_CURRENT_TIME, Reading.TRIP_REFILL_TIME);
-    }
-
-    private void addDriveRows(LinearLayout parent, Reading... items) {
-        for (Reading item : items) {
-            addRow(parent, item.key, item.label, "Pleos · " + item.api + (item.unit.isEmpty() ? "" : " · " + item.unit));
-            Button query = action(parent, item.label + " 조회", () -> drive.read(item));
-            query.setTag("query." + item.api);
-        }
-    }
-
-    private void buildEvCard(LinearLayout parent) {
-        LinearLayout body = card(parent, "전기 · EV", "충전율 % · 전비 km/kWh · 배터리 용량 Wh");
-        body.setTag("energy.ev");
-        action(body, "전기 정보 조회", this::readEv);
-        LinearLayout updates = actionRow(body);
-        action(updates, "충전율 구독 시작", () -> evBattery.startUpdates());
-        action(updates, "구독 중지", () -> evBattery.stopUpdates());
-        addRow(body, "ev.soc", "배터리 충전율", "Pleos · getEvBatteryStateOfCharge");
-        addRow(body, "aaos.ev.energy", "배터리 잔량", "AAOS · EV_BATTERY_LEVEL · Wh");
-        addRow(body, "aaos.ev.usable", "현재 사용 가능 용량", "AAOS · EV_CURRENT_BATTERY_CAPACITY · Wh");
-        addRow(body, "aaos.ev.nominal", "공칭 배터리 용량", "AAOS · INFO_EV_BATTERY_CAPACITY · Wh");
-        addRow(body, "ev.current", "현재 운행 전비", "Pleos · getCurrentEvEfficiency · km/kWh");
-        addRow(body, "ev.cumulative", "누적 전비", "Pleos · getCumulativeEvEfficiency · km/kWh");
-        addRow(body, "ev.instant", "순간 전비", "Pleos · getInstantaneousEvEfficiency · km/kWh");
-        addRow(body, "ev.charge", "충전 이후 전비", "Pleos · getSinceChargeEvEfficiency · km/kWh");
-        addRow(body, "ev.stream", "충전율 실시간 구독", "Pleos · registerEvBatteryStateOfCharge · %");
-    }
-
+    // 3. 연료 조회: AAOS 표준값과 Pleos SDK 값을 따로 비교한다.
     private void buildFuelCard(LinearLayout parent) {
         LinearLayout standard = card(parent, "연료 · AAOS 표준", "표준 API로 직접 읽은 값과 잔량 비율 계산값입니다.");
         standard.setTag("energy.fuel.aaos");
@@ -254,6 +251,55 @@ public final class DiagnosticActivity extends AppCompatActivity {
         query.setTag("query." + item.api);
     }
 
+    private void readFuel() {
+        fuel.readAll();
+        aaos.readFuel(session);
+    }
+
+    // 4. EV 조회: 충전율·전비·배터리 용량을 확인한다.
+    private void buildEvCard(LinearLayout parent) {
+        LinearLayout body = card(parent, "전기 · EV", "충전율 % · 전비 km/kWh · 배터리 용량 Wh");
+        body.setTag("energy.ev");
+        action(body, "전기 정보 조회", this::readEv);
+        LinearLayout updates = actionRow(body);
+        action(updates, "충전율 구독 시작", () -> evBattery.startUpdates());
+        action(updates, "구독 중지", () -> evBattery.stopUpdates());
+        addRow(body, "ev.soc", "배터리 충전율", "Pleos · getEvBatteryStateOfCharge");
+        addRow(body, "aaos.ev.energy", "배터리 잔량", "AAOS · EV_BATTERY_LEVEL · Wh");
+        addRow(body, "aaos.ev.usable", "현재 사용 가능 용량", "AAOS · EV_CURRENT_BATTERY_CAPACITY · Wh");
+        addRow(body, "aaos.ev.nominal", "공칭 배터리 용량", "AAOS · INFO_EV_BATTERY_CAPACITY · Wh");
+        addRow(body, "ev.current", "현재 운행 전비", "Pleos · getCurrentEvEfficiency · km/kWh");
+        addRow(body, "ev.cumulative", "누적 전비", "Pleos · getCumulativeEvEfficiency · km/kWh");
+        addRow(body, "ev.instant", "순간 전비", "Pleos · getInstantaneousEvEfficiency · km/kWh");
+        addRow(body, "ev.charge", "충전 이후 전비", "Pleos · getSinceChargeEvEfficiency · km/kWh");
+        addRow(body, "ev.stream", "충전율 실시간 구독", "Pleos · registerEvBatteryStateOfCharge · %");
+    }
+
+    private void readEv() {
+        evBattery.readAll();
+        aaos.readEvBattery(session);
+    }
+
+    // 5. 주행 조회: 주행 상태·거리·시간과 누적거리 구독을 확인한다.
+    private void buildDrivePage() {
+        LinearLayout state = card(drivePage, "주행 상태", "CAR_DRIVE · 브레이크 true=눌림, false=떼짐\n조향각은 전륜 기준이며 왼쪽은 음수입니다.");
+        addDriveRows(state, Reading.MODE, Reading.CRUISE_SPEED, Reading.BRAKE,
+                Reading.CRUISE_STATE, Reading.STEERING);
+        LinearLayout distance = card(drivePage, "거리", "총 누적거리는 km, Trip 통계 거리는 m입니다. 각각 별도 API로 조회합니다.");
+        addDriveRows(distance, Reading.ODOMETER, Reading.TRIP_CUMULATIVE_DISTANCE,
+                Reading.TRIP_CURRENT_DISTANCE, Reading.TRIP_INSTANT_DISTANCE, Reading.TRIP_REFILL_DISTANCE);
+        LinearLayout time = card(drivePage, "주행 시간", "SDK 원값 · 분 단위");
+        addDriveRows(time, Reading.TRIP_CUMULATIVE_TIME, Reading.TRIP_CURRENT_TIME, Reading.TRIP_REFILL_TIME);
+    }
+
+    private void addDriveRows(LinearLayout parent, Reading... items) {
+        for (Reading item : items) {
+            addRow(parent, item.key, item.label, "Pleos · " + item.api + (item.unit.isEmpty() ? "" : " · " + item.unit));
+            Button query = action(parent, item.label + " 조회", () -> drive.read(item));
+            query.setTag("query." + item.api);
+        }
+    }
+
     private void buildDistanceCard(LinearLayout parent) {
         LinearLayout body = card(parent, "주행거리", "1회 조회와 실시간 구독을 각각 표시합니다.");
         LinearLayout queries = actionRow(body);
@@ -269,6 +315,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         addRow(body, "aaos.odometer", "표준 API 총 누적거리", "AAOS · PERF_ODOMETER · km");
     }
 
+    // 6. 차량·위치 조회: 사용자가 선택한 VIN 또는 위치만 요청한다.
     private void buildOptionalCard(LinearLayout parent) {
         LinearLayout position = card(parent, "위치 · 위도/경도", "조회 버튼을 누른 경우에만 위치를 요청합니다. 위치 권한 승인 후 조회 버튼을 다시 누르세요.");
         LinearLayout queries = actionRow(position);
@@ -292,53 +339,23 @@ public final class DiagnosticActivity extends AppCompatActivity {
         addRow(fields, "vehicle.vin", "VIN · 끝 4자리", "Pleos · getVINInfo");
     }
 
-    @Override protected void onStart() {
-        super.onStart();
-        started = true;
-        reconnect();
-    }
-
-    private void reconnect() {
-        if (!started) return;
-        closeMeasurements();
-        if (aaos != null) aaos.close();
-        aaos = new AaosVehicleDiagnosticService(this);
-        aaos.start((canUse, detail) -> {
-            if (!started) return;
-            connection.setText(detail);
-            allowed = canUse;
-            login.setEnabled(canUse);
-            if (canUse && session == null) openMeasurements();
-            if (!canUse) closeMeasurements();
-            setActionsEnabled(canUse && session != null);
-        });
-    }
-
-    private void openMeasurements() {
-        resetRows();
-        session = new DiagnosticSession((key, source, state, value, time) -> {
-            DiagnosticReadingView row = rows.get(key);
-            if (row == null) { addRow(readings, key, key, source); row = rows.get(key); }
-            row.render(source, state, value, time);
-            updateSummary();
-        });
-        try {
-            vehicle = new Vehicle(this);
-            vehicle.initialize();
-            fuel = new FuelDiagnosticService(vehicle.getFuel(), session);
-            evBattery = new EvBatteryDiagnosticService(vehicle.getEvBattery(), session);
-            odometer = new OdometerDiagnosticService(vehicle.getOdometer(), session);
-            drive = new DriveDiagnosticService(vehicle.getDrivingMode(), vehicle.getOdometer(),
-                    vehicle.getBrake(), vehicle.getSteeringWheel(), session);
-            carInfo = new CarInfoDiagnosticService(vehicle.getCarInfo(), session);
-            location = new LocationDiagnosticService(this, session);
-            connection.append("\nVehicle 초기화 요청됨 · 조회 응답으로 기능별 연결 확인");
-        } catch (RuntimeException error) {
-            closeMeasurements();
-            connection.append("\nVehicle 초기화 오류: " + error.getClass().getSimpleName());
+    private void readLocation(boolean current) {
+        requestedLocationKey = current ? "location.current" : "location.last";
+        if (checkSelfPermission(LOCATION_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+            try {
+                getPackageManager().getPermissionInfo(LOCATION_PERMISSION, 0);
+            } catch (PackageManager.NameNotFoundException error) {
+                session.begin(requestedLocationKey, "Pleos FusedLocation", "", false)
+                        .status("미지원", "이 이미지에 FUSED_LOCATION 권한 정의 없음");
+                return;
+            }
+            requestPermissions(new String[]{LOCATION_PERMISSION}, 101);
+            return;
         }
+        if (current) location.readCurrentLocation(); else location.readLastLocation();
     }
 
+    // 공통 조회·권한: 선택 탭 범위만 조회하고 승인 후에는 재조회를 기다린다.
     private void readSelectedPage() {
         switch (activeTab) {
             case TAB_FUEL: readFuel(); break;
@@ -349,16 +366,6 @@ public final class DiagnosticActivity extends AppCompatActivity {
                 break;
             // VIN/location always require their individual explicit actions.
         }
-    }
-
-    private void readFuel() {
-        fuel.readAll();
-        aaos.readFuel(session);
-    }
-
-    private void readEv() {
-        evBattery.readAll();
-        aaos.readEvBattery(session);
     }
 
     private void requestAaosPermissions() {
@@ -378,22 +385,6 @@ public final class DiagnosticActivity extends AppCompatActivity {
         }
     }
 
-    private void readLocation(boolean current) {
-        requestedLocationKey = current ? "location.current" : "location.last";
-        if (checkSelfPermission(LOCATION_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
-            try {
-                getPackageManager().getPermissionInfo(LOCATION_PERMISSION, 0);
-            } catch (PackageManager.NameNotFoundException error) {
-                session.begin(requestedLocationKey, "Pleos FusedLocation", "", false)
-                        .status("미지원", "이 이미지에 FUSED_LOCATION 권한 정의 없음");
-                return;
-            }
-            requestPermissions(new String[]{LOCATION_PERMISSION}, 101);
-            return;
-        }
-        if (current) location.readCurrentLocation(); else location.readLastLocation();
-    }
-
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(code, permissions, grants);
         // Permission dialogs may stop/restart this Activity. Never resume an old request automatically.
@@ -408,10 +399,10 @@ public final class DiagnosticActivity extends AppCompatActivity {
         }
     }
 
+    // 7. 진단 종료: 요청을 무효화한 뒤 구독·서비스와 화면의 값을 정리한다.
     @Override protected void onStop() {
         started = false;
         allowed = false;
-        login.setEnabled(false);
         closeMeasurements();
         if (aaos != null) { aaos.close(); aaos = null; }
         setActionsEnabled(false);
@@ -434,6 +425,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         resetRows();
     }
 
+    // 공통 결과 표시: 조회 상태 요약과 화면 구성 요소.
     private void setActionsEnabled(boolean enabled) {
         for (Button button : actions) button.setEnabled(enabled);
         readings.setVisibility(enabled ? View.VISIBLE : View.GONE);
@@ -473,10 +465,18 @@ public final class DiagnosticActivity extends AppCompatActivity {
         }
     }
 
+    private LinearLayout page(String tag) {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setTag(tag);
+        readings.addView(page);
+        return page;
+    }
+
     private void addRow(LinearLayout parent, String key, String label, String api) {
         View divider = new View(this);
         divider.setBackgroundColor(androidx.core.graphics.ColorUtils.setAlphaComponent(
-                MaterialColors.getColor(parent, com.google.android.material.R.attr.colorOnSurface), 25));
+                MaterialColors.getColor(parent, R.attr.colorOnSurface), 25));
         parent.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         DiagnosticReadingView view = new DiagnosticReadingView(this, label, api);
         view.setTag(key);
@@ -490,7 +490,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         frame.setCardElevation(0);
         frame.setStrokeWidth(dp(1));
         frame.setStrokeColor(androidx.core.graphics.ColorUtils.setAlphaComponent(
-                MaterialColors.getColor(frame, com.google.android.material.R.attr.colorOnSurface), 35));
+                MaterialColors.getColor(frame, R.attr.colorOnSurface), 35));
         LinearLayout.LayoutParams params;
         if (parent.getOrientation() == LinearLayout.HORIZONTAL) {
             params = new LinearLayout.LayoutParams(0, -2, 1);
@@ -531,7 +531,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     private Button button(LinearLayout parent, String label, Runnable action) {
         com.google.android.material.button.MaterialButton button =
                 new com.google.android.material.button.MaterialButton(this, null,
-                        com.google.android.material.R.attr.materialButtonOutlinedStyle);
+                        R.attr.materialButtonOutlinedStyle);
         button.setText(label);
         button.setAllCaps(false);
         button.setMinHeight(dp(56));

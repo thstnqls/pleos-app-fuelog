@@ -1,14 +1,14 @@
 package com.pleos.fuelog.home;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import com.pleos.fuelog.time.AppTime;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /** Read-only, shared vehicle maintenance data. Private notes and expenses are not parsed. */
 public final class MaintenanceSummary {
@@ -22,7 +22,7 @@ public final class MaintenanceSummary {
         Double km = odometer == null || odometer.isNull("km") ? null : odometer.optDouble("km", Double.NaN);
         if (km != null && (!Double.isFinite(km) || km < 0)) km = null;
         odometerKm = km;
-        odometerObservedAt = odometer == null ? 0 : odometer.optLong("observedAt");
+        odometerObservedAt = odometer == null ? 0 : AppTime.epochMillis(odometer.opt("observedAt"));
         JSONArray list = response.optJSONArray("items");
         if (list == null) throw new JSONException("items missing");
         List<Item> parsed = new ArrayList<>();

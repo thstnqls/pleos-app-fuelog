@@ -21,6 +21,7 @@ public final class ApiClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private final HttpUrl baseUrl;
     private final OkHttpClient client;
+    public final ApiStatus status = new ApiStatus();
 
     public ApiClient(String baseUrl) {
         this(baseUrl, clientBuilder().build());
@@ -57,23 +58,23 @@ public final class ApiClient {
         if (query != null) {
             query.forEach(url::addQueryParameter);
         }
-        return enqueue("GET", url.build(), null, token, callback);
+        return enqueue("GET", url.build(), null, token, null, callback);
     }
 
     public Call create(String path, String json, String token, ResultCallback callback) {
-        return enqueue("POST", resolve(path), Objects.requireNonNull(json, "json"), token, callback);
+        return enqueue("POST", resolve(path), Objects.requireNonNull(json, "json"), token, null, callback);
     }
 
     public Call update(String path, String json, String token, ResultCallback callback) {
-        return enqueue("PUT", resolve(path), Objects.requireNonNull(json, "json"), token, callback);
+        return enqueue("PUT", resolve(path), Objects.requireNonNull(json, "json"), token, null, callback);
     }
 
     public Call patch(String path, String json, String token, ResultCallback callback) {
-        return enqueue("PATCH", resolve(path), Objects.requireNonNull(json, "json"), token, callback);
+        return enqueue("PATCH", resolve(path), Objects.requireNonNull(json, "json"), token, null, callback);
     }
 
     public Call delete(String path, String token, ResultCallback callback) {
-        return enqueue("DELETE", resolve(path), null, token, callback);
+        return enqueue("DELETE", resolve(path), null, token, null, callback);
     }
 
     private HttpUrl resolve(String path) {
@@ -91,7 +92,13 @@ public final class ApiClient {
         return url;
     }
 
-    private Call enqueue(String method, HttpUrl url, String json, String token, ResultCallback callback) {
+    public Call request(String method, String path, String json, String token,
+                        Map<String, String> headers, ResultCallback callback) {
+        return enqueue(method, resolve(path), json, token, headers, callback);
+    }
+
+    private Call enqueue(String method, HttpUrl url, String json, String token,
+                         Map<String, String> headers, ResultCallback callback) {
         Objects.requireNonNull(callback, "callback");
         RequestBody body = json == null ? null : RequestBody.create(json, JSON);
         Request.Builder request = new Request.Builder().url(url)
@@ -99,10 +106,20 @@ public final class ApiClient {
         if (token != null && !token.trim().isEmpty()) {
             request.header("Authorization", "Bearer " + token);
         }
+        if (headers != null) headers.forEach((name, value) -> {
+            if (!name.equalsIgnoreCase("X-Trip-User-Session") && !name.equalsIgnoreCase("X-Trip-User-Candidate")
+                    && !name.equalsIgnoreCase("X-Installation-Id") && !name.equalsIgnoreCase("X-Installation-Secret")
+                    && !name.equalsIgnoreCase("Idempotency-Key") && !name.equalsIgnoreCase("If-Match"))
+                throw new IllegalArgumentException("Unsupported API header: " + name);
+            request.header(name, value);
+        });
+        String path = url.encodedPath().substring(baseUrl.encodedPath().length());
+        long attempt = status.begin(method, path);
         Call call = client.newCall(request.build());
         call.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException error) {
+                if (!call.isCanceled()) status.complete(method, path, attempt, -1);
                 callback.onFailure(error);
             }
 
@@ -114,9 +131,11 @@ public final class ApiClient {
                     result = new ApiResponse(closedResponse.code(), closedResponse.headers(),
                             responseBody == null ? "" : responseBody.string());
                 } catch (IOException error) {
+                    if (!call.isCanceled()) status.complete(method, path, attempt, -1);
                     callback.onFailure(error);
                     return;
                 }
+                status.complete(method, path, attempt, result.getStatusCode());
                 if (result.isSuccessful()) {
                     callback.onSuccess(result);
                 } else {

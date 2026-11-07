@@ -10,10 +10,6 @@ if (localConfigFile.exists()) {
 def apiBaseUrl = providers.gradleProperty('API_BASE_URL')
         .orElse(localConfig.getProperty('API_BASE_URL', '')).get().trim()
 def quotedApiBaseUrl = groovy.json.JsonOutput.toJson(apiBaseUrl)
-def authSetting = { name ->
-    groovy.json.JsonOutput.toJson(providers.gradleProperty(name)
-            .orElse(localConfig.getProperty(name, '')).get().trim())
-}
 
 android {
     namespace 'com.pleos.fuelog'
@@ -27,8 +23,6 @@ android {
         versionCode 1
         versionName "1.0"
         buildConfigField 'String', 'API_BASE_URL', quotedApiBaseUrl
-        buildConfigField 'String', 'SUPABASE_URL', authSetting('SUPABASE_URL')
-        buildConfigField 'String', 'SUPABASE_PUBLISHABLE_KEY', authSetting('SUPABASE_PUBLISHABLE_KEY')
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -59,8 +53,7 @@ dependencies {
     testImplementation libs.junit
     testImplementation libs.mockwebserver
     testImplementation 'org.json:json:20240303'
+    androidTestImplementation libs.mockwebserver
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
-    implementation "ai.pleos.playground:Vehicle:2.3.2"
-    implementation "ai.pleos.playground:FusedLocation:1.1.3"
 }

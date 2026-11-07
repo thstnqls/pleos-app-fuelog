@@ -62,6 +62,30 @@ public class ApiClientTest {
         }
     }
 
+    @Test public void installationAndScopedProofsUseSeparateHeadersAtBackendRoot() throws Exception {
+        ApiClient root = new ApiClient(server.url("/").toString());
+        server.enqueue(new MockResponse().setBody("{}"));
+        Result result = new Result();
+        root.request("POST", "recording-intervals/id/samples", "{}", "installation",
+                java.util.Map.of("X-Trip-User-Candidate", "candidate"), result);
+        result.await();
+        RecordedRequest request = server.takeRequest(5, TimeUnit.SECONDS);
+        assertEquals("/recording-intervals/id/samples", request.getPath());
+        assertEquals("Bearer installation", request.getHeader("Authorization"));
+        assertEquals("candidate", request.getHeader("X-Trip-User-Candidate"));
+        assertNull(request.getHeader("X-Trip-User-Session"));
+        server.enqueue(new MockResponse().setBody("{}"));
+        Result personal = new Result();
+        root.request("DELETE", "trip-user/session", null, "installation",
+                java.util.Map.of("X-Trip-User-Session", "Bearer scoped"), personal);
+        personal.await();
+        RecordedRequest released = server.takeRequest(5, TimeUnit.SECONDS);
+        assertEquals("DELETE", released.getMethod());
+        assertEquals("Bearer scoped", released.getHeader("X-Trip-User-Session"));
+        assertThrows(IllegalArgumentException.class, () -> root.request("GET", "vehicle/home", null,
+                "installation", java.util.Map.of("Authorization", "Bearer mobile"), new Result()));
+    }
+
     @Test public void httpErrorsRetainStatusAndBodyWithoutAuthorization() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(422).setBody("{\"error\":\"invalid\"}"));
         Result result = new Result();

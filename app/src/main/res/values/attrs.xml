@@ -1,0 +1,7 @@
+<resources>
+    <!-- Expose the existing Material theme attributes through this module's non-transitive R. -->
+    <attr name="colorOnSurface" format="color" />
+    <attr name="colorSurface" format="color" />
+    <attr name="borderlessButtonStyle" format="reference" />
+    <attr name="materialButtonOutlinedStyle" format="reference" />
+</resources>

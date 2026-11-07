@@ -1,6 +1,5 @@
-package com.pleos.fuelog.auth;
+package com.pleos.fuelog.storage;
 
-import android.content.Context;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.AtomicFile;
@@ -20,17 +19,13 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /** AES-GCM key stays in Android Keystore; ciphertext is excluded from backup/device transfer. */
-final class EncryptedAuthStore implements AuthStore {
+public final class EncryptedJsonStore {
+    // Keep the legacy alias: installation credentials and outbox files already use this key.
     private static final String ALIAS = "fuelog.supabase.auth.v1";
     private final AtomicFile file;
+    public EncryptedJsonStore(File location) { file = new AtomicFile(location); }
 
-    EncryptedAuthStore(Context context) {
-        this(new File(context.getNoBackupFilesDir(), "supabase-auth.bin"));
-    }
-
-    EncryptedAuthStore(File location) { file = new AtomicFile(location); }
-
-    @Override public String read() throws IOException {
+    public String read() throws IOException {
         byte[] bytes;
         try { bytes = file.readFully(); }
         catch (FileNotFoundException absent) { return "{}"; }
@@ -45,13 +40,12 @@ final class EncryptedAuthStore implements AuthStore {
             cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, iv));
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException error) {
-            // A lost/invalidated key or corrupt file requires a fresh sign-in, never plaintext fallback.
-            file.delete();
-            throw new AuthException("저장된 인증 정보를 읽을 수 없습니다. 다시 로그인하세요.");
+            // Preserve damaged files for recovery; never overwrite them with an empty store.
+            throw new IOException("저장된 암호화 정보를 읽을 수 없습니다.", error);
         }
     }
 
-    @Override public void write(String value) throws IOException {
+    public void write(String value) throws IOException {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, key());
@@ -68,7 +62,7 @@ final class EncryptedAuthStore implements AuthStore {
                 throw error;
             }
         } catch (GeneralSecurityException error) {
-            throw new AuthException("인증 정보를 안전하게 저장할 수 없습니다.");
+            throw new IOException("암호화 정보를 안전하게 저장할 수 없습니다.", error);
         }
     }
 

@@ -73,11 +73,6 @@ public final class AaosVehicleDiagnosticService {
                 + "\nUX 제한 비트: 0x" + Integer.toHexString(current.getActiveRestrictions()));
     }
 
-    public void readAll(DiagnosticSession session) {
-        readFuel(session);
-        readOdometer(session);
-    }
-
     public void readFuel(DiagnosticSession session) {
         readFuelLevels(session);
         readFuelEconomy(session);
@@ -120,21 +115,10 @@ public final class AaosVehicleDiagnosticService {
         });
     }
 
-    public void readEvAll(DiagnosticSession session) {
-        readEvBattery(session);
-        readOdometer(session);
-    }
-
     public void readEvBattery(DiagnosticSession session) {
         read(session, "aaos.ev.energy", VehiclePropertyIds.EV_BATTERY_LEVEL, "Wh");
         read(session, "aaos.ev.usable", VehiclePropertyIds.EV_CURRENT_BATTERY_CAPACITY, "Wh");
         read(session, "aaos.ev.nominal", VehiclePropertyIds.INFO_EV_BATTERY_CAPACITY, "Wh");
-    }
-
-    public void readEnergyAll(DiagnosticSession session) {
-        readFuel(session);
-        readEvBattery(session);
-        readOdometer(session);
     }
 
     public void readOdometer(DiagnosticSession session) {

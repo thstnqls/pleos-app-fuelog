@@ -2,7 +2,7 @@ package com.pleos.fuelog.connection;
 
 import org.json.JSONObject;
 
-/** Validation gate before leaving mock preview. HTTP errors never reach this gate. */
+/** Validates legacy vehicle-registration responses before the connection state changes. */
 public final class ConnectionResponse {
     private ConnectionResponse() {}
     public static void validate(JSONObject value) throws Exception {
