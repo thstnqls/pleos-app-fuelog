@@ -29,6 +29,7 @@ public final class HomeRecorder {
     public String storageError = "";
     private FuelCandidates fuelCandidates;
     private final FuelStationEnrichment stationEnrichment;
+    private final ChargeEnrichment chargeEnrichment;
     private final EvRecording ev = new EvRecording();
     private EncryptedJsonStore evStore;
     private JSONObject evIntervals;
@@ -66,8 +67,13 @@ public final class HomeRecorder {
         store = context.getSharedPreferences("home_recording", Context.MODE_PRIVATE);
         connection = ConnectionSession.get(context);
         stationEnrichment = new FuelStationEnrichment(context, this, connection);
+        chargeEnrichment = new ChargeEnrichment(context, this, connection);
         try {
             sync = new RecordingSync(context, connection);
+            sync.onChargeResponse = response -> {
+                try { applyChargeResponse(response); chargeEnrichment.synced(response); }
+                catch (Exception error) { storageError = "충전 동기화 응답 저장 실패"; }
+            };
             sync.onFuelResponse = response -> {
                 try { fuelCandidates.applyServer(response, response.getString("id"), response.getString("owner")); saveFuel(); stationEnrichment.synced(response); }
                 catch (Exception error) { storageError = "주유 동기화 응답 저장 실패"; }
@@ -96,11 +102,12 @@ public final class HomeRecorder {
         if (trip.active) {
             try {
                 JSONArray history = new JSONArray(store.getString("history", "[]"));
-                JSONObject recovered = snapshot(true).put("endedAt", trip.sampledAt > 0 ? trip.sampledAt : trip.savedAt)
+                JSONObject recovered = snapshot(true).put("endedAt", Math.max(trip.sampledAt > 0 ? trip.sampledAt : trip.savedAt, ev.snapshot().optLong("batterySampledAt")))
                         .put("endEstimated", true).put("missing", true);
                 boolean exists = false;
                 for (int i = 0; i < history.length(); i++) if (intervalId.equals(history.getJSONObject(i).optString("intervalId"))) exists = true;
                 if (sync == null) throw new IOException();
+                queueCharges(ev.snapshot());
                 sync.finish(withEv(recovered));
                 if (!exists) history.put(recovered);
                 String next = UUID.randomUUID().toString();
@@ -151,9 +158,11 @@ public final class HomeRecorder {
         for (int i = 0; i < history.length(); i++)
             if (intervalId.equals(history.getJSONObject(i).optString("intervalId"))) exists = true;
         stationEnrichment.close();
+        chargeEnrichment.close();
         JSONObject ended = snapshot(true);
         if (sync == null) throw new IOException("Upload queue unavailable");
         saveEv();
+        queueCharges(ev.snapshot());
         sync.finish(withEv(ended));
         if (!exists) history.put(ended);
         String nextId = UUID.randomUUID().toString();
@@ -266,10 +275,16 @@ public final class HomeRecorder {
     public void configureStationSearch(boolean coordinatesVerified, String fuelType) {
         stationEnrichment.configure(coordinatesVerified, fuelType);
     }
-    public boolean locationAssistConsent() { return store.getBoolean("locationAssistConsent", false); }
+    public boolean locationAssistConsent() {
+        String subject = verifiedOwner();
+        return !subject.isEmpty() && subject.equals(store.getString("locationAssistConsentOwner", ""))
+                && store.getBoolean("locationAssistConsent", false);
+    }
     public void setLocationAssistConsent(boolean consent) throws IOException {
-        if (!store.edit().putBoolean("locationAssistConsent", consent).commit()) throw new IOException();
-        if (!consent) stationEnrichment.close();
+        if (consent && verifiedOwner().isEmpty()) throw new IOException("사용자 확인 필요");
+        if (!store.edit().putBoolean("locationAssistConsent", consent)
+                .putString("locationAssistConsentOwner", consent ? verifiedOwner() : "").commit()) throw new IOException();
+        if (!consent) { stationEnrichment.close(); chargeEnrichment.close(); }
     }
 
     public void setEvSource(AaosVehicleDiagnosticService source) { evSource = source; }
@@ -321,10 +336,62 @@ public final class HomeRecorder {
         handler.removeCallbacks(timeout); evPending = false;
         if (!trip.active || !subject.equals(verifiedOwner()) || !interval.equals(intervalId)) { interruptEv(); return; }
         try {
+            JSONObject prior = latestCharge(ev.snapshot());
             if (gear.isEmpty()) ev.interrupt();
             else ev.sample(gear, kwh, basis, System.currentTimeMillis());
-            saveEv(); changed.run();
+            JSONObject latest = latestCharge(ev.snapshot());
+            if (latest != null) {
+                chargeEnrichment.observe(latest, prior == null || !prior.optString("id").equals(latest.optString("id")));
+            }
+            saveEv();
+            queueCharges(ev.snapshot());
+            changed.run();
         } catch (Exception error) { storageError = "배터리 기록 저장 실패"; interruptEv(); }
+    }
+
+    private static JSONObject latestCharge(JSONObject data) {
+        JSONArray entries = data.optJSONArray("chargeCandidates");
+        return entries == null || entries.length() == 0 ? null : entries.optJSONObject(entries.length() - 1);
+    }
+
+    public JSONObject currentCharge(String id) {
+        if (!trip.active) return null;
+        try {
+            JSONArray entries = ev.snapshot().optJSONArray("chargeCandidates");
+            if (entries != null) for (int i = 0; i < entries.length(); i++)
+                if (id.equals(entries.getJSONObject(i).optString("id"))) return entries.getJSONObject(i);
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    private void queueCharges(JSONObject data) throws Exception {
+        if (sync == null || owner.isEmpty()) return;
+        JSONArray entries = data.optJSONArray("chargeCandidates");
+        if (entries != null) for (int i = 0; i < entries.length(); i++) {
+            JSONObject entry = entries.getJSONObject(i);
+            if (entry.optString("status").equals("CANDIDATE") && entry.optLong("syncedEndAt") < entry.optLong("endAt"))
+                sync.charge(entry, owner, intervalId);
+        }
+    }
+
+    public void applyChargeResponse(JSONObject response) throws Exception {
+        String id = response.getString("id");
+        // The durable sync path already validates id+owner against the queued request.
+        if (currentCharge(id) != null) {
+            if (!owner.equals(response.getString("owner"))) throw new IllegalArgumentException();
+            if (ev.applyResponse(response)) saveEv();
+        } else if (evIntervals != null) {
+            java.util.Iterator<String> ids = evIntervals.keys();
+            while (ids.hasNext()) {
+                JSONArray entries = evIntervals.getJSONObject(ids.next()).optJSONArray("chargeCandidates");
+                if (entries != null) for (int i = 0; i < entries.length(); i++) {
+                    JSONObject entry = entries.getJSONObject(i);
+                    if (id.equals(entry.optString("id")) && EvRecording.applyResponse(entry, response))
+                        evStore.write(evIntervals.toString());
+                }
+            }
+        }
+        changed.run();
     }
 
     private void saveEv() throws Exception {
@@ -408,6 +475,7 @@ public final class HomeRecorder {
         visible = false;
         evSource = null;
         stationEnrichment.close();
+        chargeEnrichment.close();
         interruptEv();
         try { if (trip.active) saveEv(); } catch (Exception error) { storageError = "배터리 중단 상태 저장 실패"; }
         fuelGeneration++;
@@ -423,6 +491,7 @@ public final class HomeRecorder {
 
     public void clearPersonalCache() {
         stationEnrichment.close();
+        chargeEnrichment.close();
         interruptEv();
         try { if (!owner.isEmpty()) endForSwitch(); }
         catch (Exception error) { storageError = "개인 기록 보존 실패 · 화면 잠금 유지"; }
@@ -436,6 +505,7 @@ public final class HomeRecorder {
 
     public void lockPersonalSession() throws Exception {
         stationEnrichment.close();
+        chargeEnrichment.close();
         interruptEv();
         if (!store.edit().putBoolean("privacyLocked", true).putBoolean("disconnectPending", true).commit())
             throw new IOException();

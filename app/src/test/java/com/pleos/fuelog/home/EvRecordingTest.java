@@ -57,4 +57,19 @@ public class EvRecordingTest {
         assertEquals(5, restored.snapshot().getJSONArray("chargeCandidates").getJSONObject(0).getDouble("estimatedKwh"), 0);
         restored.reset(); assertFalse(restored.snapshot().has("chargeCandidates"));
     }
+    @Test public void serverRevisionCannotRegressAndTerminalCandidateStopsGrowing() throws Exception {
+        EvRecording ev = new EvRecording();
+        ev.sample("D", 20, "WH", 1000); ev.sample("P", 22, "WH", 2000);
+        ev.sample("P", 23, "WH", 9000);
+        JSONObject entry = ev.snapshot().getJSONArray("chargeCandidates").getJSONObject(0);
+        assertTrue(entry.getBoolean("stable"));
+        JSONObject response = new JSONObject().put("id", entry.getString("id")).put("endAt", 9000)
+                .put("revision", 2).put("status", "CONFIRMED").put("scenarios", new org.json.JSONArray());
+        assertTrue(ev.applyResponse(response));
+        assertFalse(ev.applyResponse(response.put("revision", 1).put("status", "CANDIDATE")));
+        ev.sample("P", 24, "WH", 12000);
+        JSONObject confirmed = ev.snapshot().getJSONArray("chargeCandidates").getJSONObject(0);
+        assertEquals("CONFIRMED", confirmed.getString("status"));
+        assertEquals(3, confirmed.getDouble("estimatedKwh"), 0);
+    }
 }

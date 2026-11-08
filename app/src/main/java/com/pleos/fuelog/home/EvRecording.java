@@ -30,6 +30,7 @@ public final class EvRecording {
         if (!Double.isFinite(energy) || energy < 0 || now <= 0) { interrupt(); return; }
         if (!basis.isEmpty() && !basis.equals(sampleBasis)) interrupt();
         basis = sampleBasis;
+        data.put("batterySampledAt", now);
         if (gear.equals("D") || gear.equals("R")) {
             if (!driving) {
                 start = energy; startedAt = now; driving = true; parked = Double.NaN; openId = "";
@@ -52,9 +53,11 @@ public final class EvRecording {
                 if (entry == null) {
                     openId = UUID.randomUUID().toString();
                     entry = new JSONObject().put("id", openId).put("status", "CANDIDATE")
-                            .put("startAt", startedAt).put("basis", basis);
+                            .put("startAt", startedAt).put("detectedAt", now).put("basis", basis);
                     entries.put(entry);
                 }
+                if (!entry.optString("status").equals("CANDIDATE")) return;
+                if (now - entry.optLong("detectedAt", now) >= 6000) entry.put("stable", true);
                 if (energy - parked > entry.optDouble("estimatedKwh", 0))
                     entry.put("endAt", now).put("estimatedKwh", energy - parked);
                 data.put("chargedDuringInterval", true);
@@ -62,6 +65,27 @@ public final class EvRecording {
         }
     }
 
+    public static boolean applyResponse(JSONObject entry, JSONObject response) throws Exception {
+        if (!entry.getString("id").equals(response.getString("id"))) throw new IllegalArgumentException();
+        String status = response.getString("status");
+        if (!java.util.Arrays.asList("CANDIDATE", "CONFIRMED", "REJECTED").contains(status)) throw new IllegalArgumentException();
+        long revision = response.getLong("revision");
+        if (revision <= entry.optLong("serverRevision")) return false;
+        entry.put("serverRevision", revision).put("syncedEndAt", response.getLong("endAt")).put("status", status);
+        for (String key : new String[]{"estimateStatus", "scenarios", "correctedKwh", "correctedAmount", "correctedPlace"}) {
+            entry.remove(key);
+            if (response.has(key)) entry.put(key, response.get(key));
+        }
+        return true;
+    }
+    public boolean applyResponse(JSONObject response) throws Exception {
+        org.json.JSONArray entries = data.optJSONArray("chargeCandidates");
+        if (entries != null) for (int i = 0; i < entries.length(); i++) {
+            JSONObject entry = entries.getJSONObject(i);
+            if (entry.optString("id").equals(response.optString("id"))) return applyResponse(entry, response);
+        }
+        return false;
+    }
     public JSONObject snapshot() throws Exception { return new JSONObject(data.toString()); }
     public void restore(JSONObject saved) throws Exception { data = new JSONObject(saved.toString()); interrupt(); }
 }

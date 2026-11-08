@@ -21,14 +21,14 @@ public final class RecordingPayloads {
         Set<String> waiting = new HashSet<>();
         for (int i = 0; i < jobs.length(); i++) {
             JSONObject job = jobs.getJSONObject(i);
-            if (job.getString("kind").equals("fuel")) continue;
+            if (job.getString("kind").equals("fuel") || job.getString("kind").equals("charge")) continue;
             if (!waiting.add(job.getString("localId"))) continue;
             if (job.optLong("retryAt") <= now) return i;
         }
         for (int i = 0; i < jobs.length(); i++) {
             JSONObject job = jobs.getJSONObject(i);
             JSONObject interval = intervals.optJSONObject(job.getString("localId"));
-            if (job.getString("kind").equals("fuel") && interval != null && !interval.optString("id").isEmpty()
+            if ((job.getString("kind").equals("fuel") || job.getString("kind").equals("charge")) && interval != null && !interval.optString("id").isEmpty()
                     && job.optLong("retryAt") <= now) return i;
         }
         return -1;
@@ -61,6 +61,7 @@ public final class RecordingPayloads {
             case "deliver":
                 if (!id.equals(result.getString("tripId"))) throw new IllegalArgumentException();
                 Instant.parse(result.getString("deliveredAt")); break;
+            case "charge":
             case "fuel":
                 if (!sent.getString("id").equals(result.getString("id")) || !sent.getString("owner").equals(result.getString("owner")))
                     throw new IllegalArgumentException();
@@ -79,10 +80,15 @@ public final class RecordingPayloads {
                 .put("fuelEndpointsValid", data.optBoolean("fuelEndpointsValid"))
                 .put("refueled", data.optBoolean("refueled")).put("ownerChanged", data.optBoolean("ownerChanged"))
                 .put("priceValid", data.optBoolean("priceValid"));
-        for (String key : new String[]{"startFuelLiters", "endFuelLiters", "unitPrice", "currency", "priceSource",
-                "evDetected", "evMissing", "evEndpointsValid", "consumedKwh", "chargedDuringInterval", "chargeCandidates"})
+        for (String key : new String[]{"startFuelLiters", "endFuelLiters", "unitPrice", "currency", "priceSource"})
             if (data.has(key)) result.put(key, data.get(key));
         if (data.optLong("priceObservedAt") > 0) result.put("priceObservedAt", iso(data.getLong("priceObservedAt")));
+        if (data.optBoolean("evDetected")) {
+            JSONObject ev = new JSONObject().put("detected", true).put("endpointsValid", data.optBoolean("evEndpointsValid"))
+                    .put("missing", data.optBoolean("evMissing")).put("chargedDuringInterval", data.optBoolean("chargedDuringInterval"));
+            if (data.has("consumedKwh")) ev.put("consumedKwh", data.get("consumedKwh"));
+            result.put("ev", ev);
+        }
         return result;
     }
 }

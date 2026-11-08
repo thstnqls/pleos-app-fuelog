@@ -477,7 +477,11 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (charges != null) for (int i = 0; i < charges.length(); i++) {
                 JSONObject charge = charges.optJSONObject(i);
                 if (charge == null) continue;
-                detail(body, "충전 추정 · 사용자 확인 전", metric(charge.optDouble("estimatedKwh", Double.NaN), " kWh"));
+                String chargeState = charge.optString("status");
+                detail(body, chargeState.equals("CONFIRMED") ? "모바일 확인된 충전" : chargeState.equals("REJECTED") ? "기각된 충전 후보" : "충전 추정 · 사용자 확인 전",
+                        metric(charge.optDouble("estimatedKwh", Double.NaN), " kWh"));
+                renderChargeEstimate(charge);
+                link(body, "충전 후보 상태 확인", () -> refreshChargeCandidate(charge.optString("id")));
                 paragraph(body, "감지 " + timeLabel(charge.optLong("startAt")) + " → " + timeLabel(charge.optLong("endAt")));
             }
             paragraph(body, "배터리 증가는 충전·결제 완료를 의미하지 않습니다. 모바일에서 확인해 주세요.");
@@ -486,7 +490,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             detail(body, "추정 연비", metric(summary.economy(), " km/L"));
             detail(body, "추정 연료비", metric(summary.fuelCost(), "원"));
         }
-        paragraph(body, electric ? "충전 단가 없음 · 오피넷 주유 가격은 전기요금에 적용하지 않습니다." : "단가 출처 · " + data.optString("priceSource", "유효한 단가 없음"));
+        paragraph(body, electric ? "충전비는 감지 위치 주변 사업자의 일반 회원 참고요금 평균입니다. 실제 결제금액과 다를 수 있습니다." : "단가 출처 · " + data.optString("priceSource", "유효한 단가 없음"));
         sectionLabel(body, "기록 품질");
         paragraph(body, (data.optBoolean("missing") || data.optBoolean("evMissing")) ? "일부 누락 · 수신한 구간의 거리만 표시" : "감지된 누락 없음");
         paragraph(body, "최근 수신 " + timeLabel(data.optLong("sampledAt")));
@@ -509,6 +513,78 @@ public final class CarHomeActivity extends AppCompatActivity {
         mobile.setEnabled(end != 0 && !data.optString("owner").isEmpty() && !recorder.mobileQueued(id));
         body.addView(mobile, fullButton());
         paragraph(body, "검증된 사용자 운행만 전달할 수 있습니다. 요약 업로드 후 모바일 확인함으로 전송합니다.");
+    }
+
+    private void renderChargeEstimate(JSONObject charge) {
+        JSONArray scenarios = charge.optJSONArray("scenarios");
+        if (scenarios == null || scenarios.length() == 0) {
+            String state = charge.optString("estimateStatus");
+            paragraph(body, state.equals("COORDINATE_SYSTEM_UNVERIFIED") ? "위치 좌표계 검증 필요 · 충전량만 보존"
+                    : state.equals("INSUFFICIENT_COMPARABLE_STATIONS") ? "주변 비교 사업자 또는 유효 단가 부족 · 충전량만 보존"
+                    : "감지 위치·충전 단가 확인 대기 · 충전량만 보존");
+            return;
+        }
+        if (charge.optLong("syncedEndAt") < charge.optLong("endAt")) {
+            paragraph(body, "증가한 충전량의 추정 금액 갱신 대기"); return;
+        }
+        if (scenarios.length() > 1) paragraph(body, "충전기 출력 미확정 · 출력 구간별 참고 금액");
+        for (int i = 0; i < scenarios.length(); i++) {
+            JSONObject scenario = scenarios.optJSONObject(i);
+            if (scenario == null) continue;
+            JSONArray stations = scenario.optJSONArray("stations");
+            double price = scenario.optDouble("averageWonPerKwh", Double.NaN);
+            double amount = scenario.optDouble("estimatedAmount", Double.NaN);
+            if (stations == null || stations.length() < 2 || stations.length() > 3
+                    || !Double.isFinite(price) || price <= 0 || !Double.isFinite(amount) || amount < 0) continue;
+            detail(body, chargeBandLabel(scenario.optString("powerBand")) + " 추정 충전비", metric(amount, "원"));
+            paragraph(body, stations.length() + "개 사업자 평균 " + metric(price, " 원/kWh") + " · 일반 회원 참고요금");
+            for (int j = 0; j < stations.length(); j++) {
+                JSONObject station = stations.optJSONObject(j);
+                if (station != null) paragraph(body, station.optString("name") + " · "
+                        + metric(station.optDouble("distanceMeters", Double.NaN), " m") + " · "
+                        + metric(station.optDouble("wonPerKwh", Double.NaN), " 원/kWh")
+                        + " · 요금표 확인 " + timeLabel(station.optString("verifiedAt")));
+            }
+        }
+        paragraph(body, "카드 할인·로밍·충전 손실은 반영하지 않은 참고 추정입니다.");
+    }
+
+    private String chargeBandLabel(String band) {
+        switch (band) {
+            case "SLOW": return "완속(30kW 미만)";
+            case "MEDIUM": return "중속(30~50kW 미만)";
+            case "FAST_50": return "급속(50~100kW 미만)";
+            case "FAST_100": return "급속(100~200kW 미만)";
+            case "ULTRA": return "초급속(200kW 이상)";
+            default: return "출력 미확인";
+        }
+    }
+
+    private void refreshChargeCandidate(String id) {
+        if (!allowed || !online() || fuelSyncBusy || recorder.verifiedOwner().isEmpty()) return;
+        fuelSyncBusy = true;
+        int version = ++fuelSyncGeneration;
+        try {
+            fuelSyncCall = connection.request("GET", "charge-candidates/" + UUID.fromString(id), null, "", new ResultCallback() {
+                public void onSuccess(ApiResponse response) { runOnUiThread(() -> {
+                    if (version != fuelSyncGeneration || !started || !allowed || page != TRIP) return;
+                    fuelSyncBusy = false;
+                    try {
+                        JSONObject result = new JSONObject(response.getBody());
+                        if (!id.equals(result.getString("id")) || !recorder.verifiedOwner().equals(result.getString("owner"))) throw new IllegalArgumentException();
+                        recorder.applyChargeResponse(result);
+                    } catch (Exception error) { recorder.storageError = "충전 후보 응답 확인 실패"; }
+                    render();
+                }); }
+                public void onHttpError(ApiResponse response) { failed(); }
+                public void onFailure(IOException error) { failed(); }
+                private void failed() { runOnUiThread(() -> {
+                    if (version != fuelSyncGeneration) return;
+                    fuelSyncBusy = false; recorder.storageError = "충전 후보 서버 연결 필요";
+                    if (started && allowed) render();
+                }); }
+            });
+        } catch (Exception error) { fuelSyncBusy = false; recorder.storageError = "충전 후보 조회 실패"; }
     }
 
     // 6. 주유 확인: 연료 증가 후보를 확인하고 모바일 처리 상태를 갱신한다.
@@ -757,7 +833,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         detail(body, "위치", featureStatus("location"));
         paragraph(body, settings.message);
         paragraph(body, "차량 위치 보조 · " + (recorder.locationAssistConsent() ? "동의함" : "사용 안 함")
-                + " · 주유 증가 시 주변 주유소 후보를 찾는 데 사용합니다.");
+                + " · 연료·배터리 증가 시 주변 주유소·충전소 후보를 찾는 데 사용합니다.");
         link(body, recorder.locationAssistConsent() ? "차량 위치 보조 동의 철회" : "차량 위치 보조에 동의", () -> {
             try { recorder.setLocationAssistConsent(!recorder.locationAssistConsent()); render(); }
             catch (IOException error) { paragraph(body, "위치 동의 저장 실패"); }

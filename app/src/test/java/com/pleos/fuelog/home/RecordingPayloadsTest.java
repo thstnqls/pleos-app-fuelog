@@ -38,9 +38,25 @@ public class RecordingPayloadsTest {
                 .put("endedAt", 2000).put("distanceKm", 0).put("evDetected", true)
                 .put("chargeCandidates", new JSONArray().put(candidate));
         JSONObject wire = RecordingPayloads.upload(data);
-        assertTrue(wire.getBoolean("evDetected"));
-        assertEquals("charge-1", wire.getJSONArray("chargeCandidates").getJSONObject(0).getString("id"));
-        assertFalse(wire.getJSONArray("chargeCandidates").getJSONObject(0).has("estimatedAmount"));
+        assertTrue(wire.getJSONObject("ev").getBoolean("detected"));
+        assertFalse(wire.has("chargeCandidates"));
+        assertFalse(wire.has("evDetected"));
+    }
+    @Test public void evContractAndChargeQueueRemainIndependentOfDistanceJobs() throws Exception {
+        JSONObject data = new JSONObject().put("intervalId", "local").put("startedAt", 1000).put("endedAt", 2000)
+                .put("distanceKm", 60).put("evDetected", true).put("evEndpointsValid", true).put("consumedKwh", 4);
+        JSONObject ev = RecordingPayloads.upload(data).getJSONObject("ev");
+        assertTrue(ev.getBoolean("detected")); assertEquals(4, ev.getDouble("consumedKwh"), 0);
+        JSONArray jobs = new JSONArray().put(job("charge", "a", 0)).put(job("samples", "a", 0));
+        assertEquals(1, RecordingPayloads.nextJob(jobs, new JSONObject(), 1));
+        jobs.remove(1);
+        assertEquals(-1, RecordingPayloads.nextJob(jobs, new JSONObject(), 1));
+        assertEquals(0, RecordingPayloads.nextJob(jobs, new JSONObject().put("a", new JSONObject().put("id", "server-a")), 1));
+        JSONObject sent = new JSONObject().put("id", "charge").put("owner", "owner");
+        JSONObject job = new JSONObject().put("kind", "charge").put("body", sent);
+        RecordingPayloads.validateResponse(job, new JSONObject(sent.toString()), "server-a");
+        assertThrows(Exception.class, () -> RecordingPayloads.validateResponse(job,
+                new JSONObject(sent.toString()).put("owner", "other"), "server-a"));
     }
     @Test public void sendsDeltaAndExplicitGapsInsteadOfTotalOdometer() throws Exception {
         assertEquals(.125, RecordingPayloads.sample(48200.625f, 48200.5, 0).getDouble("distanceKm"), 0);

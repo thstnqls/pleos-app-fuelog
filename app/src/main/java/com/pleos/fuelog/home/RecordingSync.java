@@ -22,6 +22,7 @@ public final class RecordingSync {
     private boolean busy, enabled;
     private long retryAt;
     private long privacyGeneration;
+    public Consumer<JSONObject> onChargeResponse = response -> {};
     public Consumer<JSONObject> onFuelResponse = response -> {};
     public String message = "서버 동기화 대기";
     private Runnable changed = () -> {};
@@ -83,6 +84,18 @@ public final class RecordingSync {
         }
         enqueue("POST", "fuel-candidates/sync", new JSONObject(candidate.toString()),
                 candidate.getString("intervalId"), "", "", "fuel");
+    }
+
+    public void charge(JSONObject candidate, String owner, String localId) throws Exception {
+        JSONObject body = new JSONObject().put("owner", owner).put("intervalId", localId);
+        for (String key : new String[]{"id", "startAt", "endAt", "estimatedKwh", "basis"}) body.put(key, candidate.get(key));
+        JSONArray jobs = state.getJSONArray("jobs");
+        for (int i = 0; i < jobs.length(); i++) {
+            JSONObject job = jobs.getJSONObject(i), old = job.optJSONObject("body");
+            if (job.optString("kind").equals("charge") && old != null && old.optString("id").equals(body.getString("id"))
+                    && old.optLong("endAt") >= body.getLong("endAt")) return;
+        }
+        enqueue("POST", "charge-candidates/sync", body, localId, "", "", "charge");
     }
 
     public void deliver(String localId, String candidate) throws Exception {
@@ -158,7 +171,7 @@ public final class RecordingSync {
             if (body != null) {
                 body = new JSONObject(body.toString());
                 if (job.getString("kind").equals("upload")) body.put("tripId", id);
-                if (job.getString("kind").equals("fuel")) {
+                if (job.getString("kind").equals("fuel") || job.getString("kind").equals("charge")) {
                     if (id.isEmpty()) return;
                     body.put("intervalId", id);
                 }
@@ -181,6 +194,7 @@ public final class RecordingSync {
                         else if (kind.equals("summary") && requestPrivacy == privacyGeneration) interval.put("summary", result);
                         else if (kind.equals("deliver")) interval.put("delivered", true);
                         else if (kind.equals("fuel")) onFuelResponse.accept(result);
+                        else if (kind.equals("charge")) onChargeResponse.accept(result);
                         state.getJSONArray("jobs").remove(jobIndex); save();
                         message = "서버 수신 확인 · 대기 " + pendingCount() + "건";
                         changed.run(); pump();

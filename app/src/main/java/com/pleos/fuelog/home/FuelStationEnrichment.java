@@ -37,7 +37,7 @@ final class FuelStationEnrichment {
         String id = candidate.optString("id");
         if (firstObservation) {
             close();
-            if (!context.getSharedPreferences("home_recording", Context.MODE_PRIVATE).getBoolean("locationAssistConsent", false)
+            if (!recorder.locationAssistConsent()
                     || !verifiedCoordinates || fuelType.isEmpty() || recorder.verifiedOwner().isEmpty()) return;
             candidateId = id; owner = recorder.verifiedOwner();
             int version = generation;
