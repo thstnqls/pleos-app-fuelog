@@ -12,6 +12,14 @@ public class FuelCandidatesTest {
         assertEquals(id, store.latest("a").getString("id"));
         assertEquals(10, store.latest("a").getInt("increasePercent"));
     }
+    @Test public void stableIncreaseRequiresSixSecondsWithoutNewPeak() throws Exception {
+        FuelCandidates store = new FuelCandidates("{}");
+        store.sample(30, 1000, "a", "trip"); store.sample(35, 2000, "a", "trip");
+        assertFalse(store.latest("a").optBoolean("stable"));
+        store.sample(35, 5000, "a", "trip"); assertFalse(store.latest("a").optBoolean("stable"));
+        store.sample(35, 8000, "a", "trip"); assertTrue(store.latest("a").optBoolean("stable"));
+        store.sample(36, 9000, "a", "trip"); assertFalse(store.latest("a").optBoolean("stable"));
+    }
     @Test public void ownerAndGapNeverBridgeReadings() throws Exception {
         FuelCandidates store = new FuelCandidates("{}");
         store.sample(30, 1000, "a", "trip"); store.sample(40, 2000, "b", "trip");

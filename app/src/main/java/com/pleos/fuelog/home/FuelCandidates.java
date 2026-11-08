@@ -33,7 +33,9 @@ public final class FuelCandidates {
                     entries.put(entry); state.put("open", entry.getString("id"));
                 }
                 // Repeated equal readings do not create or mutate candidates.
-                if (percent > peak) entry.put("endAt", now).put("increasePercent", percent - base);
+                if (percent > peak) entry.put("endAt", now).put("increasePercent", percent - base)
+                        .put("stable", false).put("peakAt", now);
+                else if (now - entry.optLong("peakAt", now) >= 6000) entry.put("stable", true);
                 state.put("peak", Math.max(peak, percent));
             } else state.put("peak", Math.max(peak, percent));
         }
@@ -71,7 +73,7 @@ public final class FuelCandidates {
         if (revision <= entry.optLong("revision")) return;
         entry.put("status", status).put("revision", revision).put("checkedAt", System.currentTimeMillis());
         // Amount/location are displayed only from validated server metadata.
-        for (String key : new String[]{"capacityVerified", "estimatedLiters", "estimatedAmount", "priceAt", "stationCandidates"}) {
+        for (String key : new String[]{"capacityVerified", "estimatedLiters", "estimatedAmount", "priceAt", "stationCandidates", "stations", "selectedStationId", "fuelType"}) {
             entry.remove(key);
             if (response.has(key)) entry.put(key, response.get(key));
         }

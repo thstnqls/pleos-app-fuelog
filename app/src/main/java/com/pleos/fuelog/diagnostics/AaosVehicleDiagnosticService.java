@@ -2,6 +2,7 @@ package com.pleos.fuelog.diagnostics;
 
 import android.car.Car;
 import android.car.VehiclePropertyIds;
+import android.car.VehicleGear;
 import android.car.drivingstate.CarUxRestrictions;
 import android.car.drivingstate.CarUxRestrictionsManager;
 import android.car.hardware.CarPropertyConfig;
@@ -123,6 +124,36 @@ public final class AaosVehicleDiagnosticService {
 
     public void readOdometer(DiagnosticSession session) {
         read(session, "aaos.odometer", VehiclePropertyIds.PERF_ODOMETER, "km");
+    }
+
+    public interface EvObserver { void onSample(String gear, double wh, double capacityWh); }
+
+    /** Recording reads are independent of UI restrictions; no UI or permission requests here. */
+    public void readEvRecording(EvObserver callback) {
+        CarPropertyManager manager = properties;
+        if (closed || manager == null) { callback.onSample("", Double.NaN, Double.NaN); return; }
+        io.execute(() -> {
+            double before = recordingValue(manager, VehiclePropertyIds.GEAR_SELECTION);
+            double wh = recordingValue(manager, VehiclePropertyIds.EV_BATTERY_LEVEL);
+            double capacity = recordingValue(manager, VehiclePropertyIds.EV_CURRENT_BATTERY_CAPACITY);
+            if (!Double.isFinite(capacity) || capacity <= 0) capacity = recordingValue(manager, VehiclePropertyIds.INFO_EV_BATTERY_CAPACITY);
+            final double fullCapacity = capacity;
+            double after = recordingValue(manager, VehiclePropertyIds.GEAR_SELECTION);
+            String gear = before != after ? "" : before == VehicleGear.GEAR_DRIVE ? "D"
+                    : before == VehicleGear.GEAR_REVERSE ? "R" : before == VehicleGear.GEAR_PARK ? "P" : "";
+            main.post(() -> { if (!closed) callback.onSample(gear, wh, fullCapacity); });
+        });
+    }
+
+    private double recordingValue(CarPropertyManager manager, int id) {
+        try {
+            CarPropertyConfig<?> config = manager.getCarPropertyConfig(id);
+            if (config == null || (config.getAccess() != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ
+                    && config.getAccess() != CarPropertyConfig.VEHICLE_PROPERTY_ACCESS_READ_WRITE)) return Double.NaN;
+            CarPropertyValue<?> value = manager.getProperty(id, 0);
+            return value != null && value.getStatus() == CarPropertyValue.STATUS_AVAILABLE
+                    && value.getValue() instanceof Number ? ((Number) value.getValue()).doubleValue() : Double.NaN;
+        } catch (RuntimeException unavailable) { return Double.NaN; }
     }
 
     private void read(DiagnosticSession session, String key, int propertyId, String unit) {

@@ -7,6 +7,9 @@ import android.os.Handler;
 import android.os.Looper;
 import com.pleos.fuelog.connection.ConnectionSession;
 import java.io.IOException;
+import java.io.File;
+import com.pleos.fuelog.diagnostics.AaosVehicleDiagnosticService;
+import com.pleos.fuelog.storage.EncryptedJsonStore;
 import java.util.UUID;
 import kotlin.Unit;
 import org.json.JSONArray;
@@ -17,14 +20,21 @@ public final class HomeRecorder {
     private static HomeRecorder instance;
     public final TripState trip = new TripState();
     private final SharedPreferences store;
+    private final ConnectionSession connection;
     public String intervalId, owner, ownerName;
     private String candidateId = "";
     public RecordingSync sync;
     private DeviceStatus deviceStatus;
-    private long ownerExpiresAt;
     private long startedAt;
     public String storageError = "";
     private FuelCandidates fuelCandidates;
+    private final FuelStationEnrichment stationEnrichment;
+    private final EvRecording ev = new EvRecording();
+    private EncryptedJsonStore evStore;
+    private JSONObject evIntervals;
+    private AaosVehicleDiagnosticService evSource;
+    private boolean evPending;
+    private int evGeneration;
     private boolean fuelPending;
     private int fuelGeneration;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -37,8 +47,10 @@ public final class HomeRecorder {
             if (!visible) return;
             if (sync != null) sync.pump();
             deviceStatus.refresh();
-            if (trip.active && !pending) read();
+            reconcileUser();
+            if (trip.active && !pending && !verifiedOwner().isEmpty()) read();
             readFuel();
+            readEv();
             changed.run();
             handler.postDelayed(this, 3000);
         }
@@ -52,11 +64,12 @@ public final class HomeRecorder {
 
     HomeRecorder(Context context) {
         store = context.getSharedPreferences("home_recording", Context.MODE_PRIVATE);
-        ConnectionSession connection = ConnectionSession.get(context);
+        connection = ConnectionSession.get(context);
+        stationEnrichment = new FuelStationEnrichment(context, this, connection);
         try {
             sync = new RecordingSync(context, connection);
             sync.onFuelResponse = response -> {
-                try { fuelCandidates.applyServer(response, response.getString("id"), response.getString("owner")); saveFuel(); }
+                try { fuelCandidates.applyServer(response, response.getString("id"), response.getString("owner")); saveFuel(); stationEnrichment.synced(response); }
                 catch (Exception error) { storageError = "주유 동기화 응답 저장 실패"; }
             };
         }
@@ -66,8 +79,13 @@ public final class HomeRecorder {
         catch (Exception e) { storageError = "연료 감지 기록을 읽지 못했습니다"; }
         intervalId = store.getString("intervalId", UUID.randomUUID().toString());
         owner = store.getString("owner", ""); ownerName = store.getString("ownerName", "");
-        ownerExpiresAt = store.getLong("ownerExpiresAt", 0);
         candidateId = store.getString("candidateId", "");
+        try {
+            evStore = new EncryptedJsonStore(new File(context.getNoBackupFilesDir(), "ev-recordings.bin"));
+            evIntervals = new JSONObject(evStore.read());
+            JSONObject savedEv = evIntervals.optJSONObject(intervalId);
+            if (savedEv != null) ev.restore(savedEv);
+        } catch (Exception error) { evIntervals = null; storageError = "배터리 기록 복원 실패 · 수집 보류"; }
         trip.active = store.getBoolean("active", false);
         trip.missing = store.getBoolean("missing", false) || trip.active;
         trip.distance = Double.longBitsToDouble(store.getLong("distance", 0));
@@ -83,7 +101,7 @@ public final class HomeRecorder {
                 boolean exists = false;
                 for (int i = 0; i < history.length(); i++) if (intervalId.equals(history.getJSONObject(i).optString("intervalId"))) exists = true;
                 if (sync == null) throw new IOException();
-                sync.finish(recovered);
+                sync.finish(withEv(recovered));
                 if (!exists) history.put(recovered);
                 String next = UUID.randomUUID().toString();
                 if (!store.edit().putString("history", history.toString()).putBoolean("active", false)
@@ -115,13 +133,13 @@ public final class HomeRecorder {
             try {
                 if (sync == null) throw new IOException();
                 startedAt = System.currentTimeMillis();
-                sync.start(intervalId, startedAt);
-                owner = "";
-                ownerName = "";
-                ownerExpiresAt = 0;
+                reconcileUser();
+                if (verifiedOwner().isEmpty()) throw new IllegalStateException("Pairing user required");
+                sync.start(intervalId, startedAt, owner);
                 candidateId = "";
+                ev.reset();
                 trip.start();
-            } catch (Exception e) { storageError = "업로드 큐 저장 실패 · 기록 시작 보류"; }
+            } catch (Exception e) { storageError = verifiedOwner().isEmpty() ? "페어링 사용자 확인 후 기록을 시작해 주세요" : "업로드 큐 저장 실패 · 기록 시작 보류"; }
         }
         save(); changed.run();
     }
@@ -132,19 +150,21 @@ public final class HomeRecorder {
         boolean exists = false;
         for (int i = 0; i < history.length(); i++)
             if (intervalId.equals(history.getJSONObject(i).optString("intervalId"))) exists = true;
+        stationEnrichment.close();
         JSONObject ended = snapshot(true);
         if (sync == null) throw new IOException("Upload queue unavailable");
-        sync.finish(ended);
+        saveEv();
+        sync.finish(withEv(ended));
         if (!exists) history.put(ended);
         String nextId = UUID.randomUUID().toString();
         if (!store.edit().putString("history", history.toString()).putBoolean("active", false)
-                .putString("intervalId", nextId).putString("owner", "").putString("ownerName", "")
-                .putLong("ownerExpiresAt", 0).putLong("distance", 0).putLong("sampledAt", 0)
+                .putString("intervalId", nextId).putLong("distance", 0).putLong("sampledAt", 0)
                 .putInt("sampleCount", 0).commit())
             throw new IOException("Unable to preserve interval");
         generation++;
         pending = false;
         trip.stop();
+        ev.interrupt(); evGeneration++; evPending = false;
         intervalId = nextId;
         candidateId = "";
         trip.distance = 0;
@@ -153,22 +173,26 @@ public final class HomeRecorder {
         save();
     }
 
-    // 4. 사용자 확인: 서버에서 검증한 사용자만 현재 구간에 연결한다.
-    public void assignUser(String subject, String name, long expiresAt, String verifiedCandidate) throws Exception {
-        if (store.getBoolean("disconnectPending", false)) throw new IllegalStateException("Disconnect pending");
-        if (!trip.active || serverIntervalId().isEmpty()) throw new IllegalStateException("Start interval before verifying");
-        if (!owner.isEmpty() && !owner.equals(subject)) throw new IllegalStateException("End interval before switching users");
-        if (!store.edit().putBoolean("privacyLocked", false).commit()) throw new IOException();
-        owner = subject;
-        ownerName = name;
-        ownerExpiresAt = expiresAt;
-        candidateId = verifiedCandidate;
-        save();
+    // 4. 사용자 유지: 서버에서 확인한 페어링 사용자만 적용하고 기존 구간의 소유자는 바꾸지 않는다.
+    private void reconcileUser() {
+        String subject = connection.authenticatedSubject;
+        if (subject.isEmpty() || store.getBoolean("disconnectPending", false)) return;
+        if (subject.equals(owner) && connection.authenticatedName.equals(ownerName)
+                && !store.getBoolean("privacyLocked", false)) return;
+        try {
+            // Even an anonymous interval ends before a new identity can own future records.
+            if (trip.active && !subject.equals(owner)) endForSwitch();
+            if (!store.edit().putBoolean("privacyLocked", false).commit()) throw new IOException();
+            owner = subject;
+            ownerName = connection.authenticatedName;
+            candidateId = "";
+            save(false);
+        } catch (Exception error) { storageError = "페어링 사용자 적용 실패 · 기존 기록 보존 중"; }
     }
 
     public String verifiedOwner() {
         if (store.getBoolean("privacyLocked", false)) return "";
-        return ownerExpiresAt > System.currentTimeMillis() ? owner : "";
+        return owner.equals(connection.authenticatedSubject) ? owner : "";
     }
 
     public String displayUser() { return verifiedOwner().isEmpty() ? "사용자 확인 필요" : ownerName; }
@@ -207,7 +231,7 @@ public final class HomeRecorder {
     }
 
     private void readFuel() {
-        if (vehicle == null || fuelPending) return;
+        if (vehicle == null || fuelPending || verifiedOwner().isEmpty()) return;
         fuelPending = true;
         int request = ++fuelGeneration;
         String subject = verifiedOwner(), interval = intervalId;
@@ -225,7 +249,13 @@ public final class HomeRecorder {
                     handler.removeCallbacks(timeout); fuelPending = false;
                     deviceStatus.fuel(value != null);
                     if (value == null || !subject.equals(verifiedOwner()) || !interval.equals(intervalId)) return;
-                    try { fuelCandidates.sample(value, System.currentTimeMillis(), subject, interval); saveFuel(); }
+                    try {
+                        JSONObject before = fuelCandidates.latest(subject);
+                        fuelCandidates.sample(value, System.currentTimeMillis(), subject, interval); saveFuel();
+                        JSONObject after = fuelCandidates.latest(subject);
+                        stationEnrichment.observe(after, after != null && (before == null
+                                || !before.optString("id").equals(after.optString("id"))));
+                    }
                     catch (Exception e) { storageError = "연료 증가 감지 저장 실패"; }
                     changed.run();
                 }); return Unit.INSTANCE;
@@ -233,17 +263,97 @@ public final class HomeRecorder {
         } catch (RuntimeException e) { timeout.run(); }
     }
 
+    public void configureStationSearch(boolean coordinatesVerified, String fuelType) {
+        stationEnrichment.configure(coordinatesVerified, fuelType);
+    }
+    public boolean locationAssistConsent() { return store.getBoolean("locationAssistConsent", false); }
+    public void setLocationAssistConsent(boolean consent) throws IOException {
+        if (!store.edit().putBoolean("locationAssistConsent", consent).commit()) throw new IOException();
+        if (!consent) stationEnrichment.close();
+    }
+
+    public void setEvSource(AaosVehicleDiagnosticService source) { evSource = source; }
+
+    private void interruptEv() {
+        evGeneration++; evPending = false; ev.interrupt();
+    }
+
+    private void readEv() {
+        if (!trip.active || evSource == null || evPending || evIntervals == null || verifiedOwner().isEmpty()) return;
+        evPending = true;
+        int request = ++evGeneration;
+        String subject = verifiedOwner(), interval = intervalId;
+        Runnable timeout = () -> { if (request == evGeneration) interruptEv(); };
+        handler.postDelayed(timeout, 10000);
+        evSource.readEvRecording((gear, wh, capacity) -> {
+            if (!visible || request != evGeneration) return;
+            if (!Double.isFinite(wh) && vehicle != null && !gear.isEmpty()) {
+                try {
+                    vehicle.getEvBattery().checkEvBatteryStateOfChargeCapabilities(config -> {
+                        handler.post(() -> {
+                            if (!visible || request != evGeneration) return;
+                            if (config == null || (config.getAccessType() != ai.pleos.playground.vehicle.api.model.capability.AccessType.READ
+                                    && config.getAccessType() != ai.pleos.playground.vehicle.api.model.capability.AccessType.READ_WRITE)) { timeout.run(); return; }
+                            try {
+                                vehicle.getEvBattery().getEvBatteryStateOfCharge(percent -> {
+                                    handler.post(() -> {
+                                        if (!visible || request != evGeneration || evSource == null) return;
+                                        evSource.readEvRecording((currentGear, ignoredWh, ignoredCapacity) -> {
+                                            if (!gear.equals(currentGear)) { timeout.run(); return; }
+                                            acceptEv(request, subject, interval, gear,
+                                                    EvRecording.kwh(Double.NaN, percent == null ? Double.NaN : percent, capacity),
+                                                    "SOC_PERCENT:" + capacity, timeout);
+                                        });
+                                    });
+                                    return Unit.INSTANCE;
+                                }, error -> { handler.post(timeout); return Unit.INSTANCE; });
+                            } catch (RuntimeException error) { timeout.run(); }
+                        }); return Unit.INSTANCE;
+                    }, error -> { handler.post(timeout); return Unit.INSTANCE; });
+                } catch (RuntimeException error) { timeout.run(); }
+            } else acceptEv(request, subject, interval, gear, EvRecording.kwh(wh, Double.NaN, capacity), "AAOS_WH", timeout);
+        });
+    }
+
+    private void acceptEv(int request, String subject, String interval, String gear, double kwh,
+                          String basis, Runnable timeout) {
+        if (!visible || request != evGeneration) return;
+        handler.removeCallbacks(timeout); evPending = false;
+        if (!trip.active || !subject.equals(verifiedOwner()) || !interval.equals(intervalId)) { interruptEv(); return; }
+        try {
+            if (gear.isEmpty()) ev.interrupt();
+            else ev.sample(gear, kwh, basis, System.currentTimeMillis());
+            saveEv(); changed.run();
+        } catch (Exception error) { storageError = "배터리 기록 저장 실패"; interruptEv(); }
+    }
+
+    private void saveEv() throws Exception {
+        if (evIntervals == null) throw new IOException("Battery store unavailable");
+        evIntervals.put(intervalId, ev.snapshot());
+        evStore.write(evIntervals.toString());
+    }
+
+    private JSONObject withEv(JSONObject snapshot) throws Exception {
+        JSONObject merged = new JSONObject(snapshot.toString());
+        JSONObject energy = evIntervals == null ? null : evIntervals.optJSONObject(snapshot.optString("intervalId"));
+        if (energy != null) {
+            java.util.Iterator<String> keys = energy.keys();
+            while (keys.hasNext()) { String key = keys.next(); merged.put(key, energy.get(key)); }
+        }
+        return merged;
+    }
+
     // 6. 운행 결과 확인: 로컬·서버 요약과 모바일 전달 상태를 조회한다.
     public TripSummary summary() {
-        if (store.getBoolean("privacyLocked", false)) return null;
+        if (store.getBoolean("privacyLocked", false) || verifiedOwner().isEmpty()) return null;
         try {
-            if (trip.active) return new TripSummary(snapshot(false));
+            if (trip.active) return new TripSummary(withEv(snapshot(false)));
             JSONArray history = new JSONArray(store.getString("history", "[]"));
             for (int i = history.length() - 1; i >= 0; i--) {
                 JSONObject entry = history.getJSONObject(i);
                 String subject = entry.optString("owner");
-                if (subject.equals(owner) && (subject.isEmpty() || ownerExpiresAt > System.currentTimeMillis()))
-                    return new TripSummary(entry);
+                if (subject.equals(owner) && (subject.isEmpty() || subject.equals(verifiedOwner())))
+                    return new TripSummary(withEv(entry));
             }
         } catch (Exception ignored) { }
         return null;
@@ -259,7 +369,7 @@ public final class HomeRecorder {
         TripSummary summary = summary();
         if (summary == null || !id.equals(summary.data.getString("intervalId")) || trip.active)
             throw new IllegalStateException();
-        if (summary.data.optString("candidateId").isEmpty() || sync == null) throw new IllegalStateException("Verified candidate required");
+        if (summary.data.optString("owner").isEmpty() || sync == null) throw new IllegalStateException("Authenticated owner required");
         sync.deliver(id, summary.data.getString("candidateId"));
         JSONObject queue = new JSONObject(store.getString("mobileQueue", "{}"));
         queue.put(id, new JSONObject().put("tripId", id).put("status", "PENDING")
@@ -296,6 +406,10 @@ public final class HomeRecorder {
     // 8. 이탈·연결 해제: 수집을 중단하고 원래 사용자 기록을 보존한다.
     public void pause() {
         visible = false;
+        evSource = null;
+        stationEnrichment.close();
+        interruptEv();
+        try { if (trip.active) saveEv(); } catch (Exception error) { storageError = "배터리 중단 상태 저장 실패"; }
         fuelGeneration++;
         fuelPending = false;
         generation++;
@@ -308,28 +422,31 @@ public final class HomeRecorder {
     }
 
     public void clearPersonalCache() {
+        stationEnrichment.close();
+        interruptEv();
         try { if (!owner.isEmpty()) endForSwitch(); }
         catch (Exception error) { storageError = "개인 기록 보존 실패 · 화면 잠금 유지"; }
         store.edit().putBoolean("privacyLocked", true).commit();
         try { if (sync != null) sync.clearPersonalCache(); }
         catch (Exception error) { storageError = "개인 캐시 삭제 실패 · 화면 잠금 유지"; }
-        ownerName = ""; ownerExpiresAt = 0;
+        ownerName = "";
         fuelGeneration++; fuelPending = false;
         save(); changed.run();
     }
 
     public void lockPersonalSession() throws Exception {
+        stationEnrichment.close();
+        interruptEv();
         if (!store.edit().putBoolean("privacyLocked", true).putBoolean("disconnectPending", true).commit())
             throw new IOException();
         // Archive under the original owner before clearing credentials; never reattribute queued records.
         endForSwitch();
         owner = "";
         ownerName = "";
-        ownerExpiresAt = 0;
         candidateId = "";
         fuelGeneration++;
         fuelPending = false;
-        if (!store.edit().putString("owner", "").putString("ownerName", "").putLong("ownerExpiresAt", 0).commit())
+        if (!store.edit().putString("owner", "").putString("ownerName", "").commit())
             throw new IOException();
     }
 
@@ -358,7 +475,7 @@ public final class HomeRecorder {
                 .putString("candidateId", candidateId).putLong("startedAt", startedAt)
                 .putInt("sampleCount", trip.sampleCount).putString("intervalId", intervalId)
                 .putString("owner", owner).putString("ownerName", ownerName)
-                .putLong("ownerExpiresAt", ownerExpiresAt)
+
                 .putBoolean("active", trip.active).putBoolean("missing", trip.missing)
                 .putLong("distance", Double.doubleToLongBits(trip.distance))
                 .putLong("sampledAt", trip.sampledAt).putLong("savedAt", savedAt).commit();

@@ -15,6 +15,12 @@
     </style>
     <style name="Theme.Fuelog.Car" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/car_accent</item>
+        <item name="colorPrimaryVariant">@color/car_primary_dark</item>
+        <item name="colorSurface">@color/car_panel</item>
+        <item name="colorOnSurface">@color/car_foreground</item>
+        <item name="android:colorBackground">@color/car_background</item>
+        <item name="colorOnBackground">@color/car_foreground</item>
+        <item name="android:windowBackground">@color/car_background</item>
         <item name="colorOnPrimary">@color/car_on_accent</item>
         <item name="colorSecondary">@color/car_accent</item>
         <item name="android:windowLightStatusBar">true</item>

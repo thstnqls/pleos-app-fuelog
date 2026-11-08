@@ -6,6 +6,19 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RecordingPayloadsTest {
+    @Test public void startAcknowledgementMustKeepThePairedOwner() throws Exception {
+        String id = java.util.UUID.randomUUID().toString();
+        JSONObject job = new JSONObject().put("kind", "start").put("localId", "local")
+                .put("body", new JSONObject().put("subjectId", "paired-user"));
+        JSONObject result = new JSONObject().put("id", id).put("localIntervalId", "local")
+                .put("subjectId", "paired-user");
+        RecordingPayloads.validateResponse(job, result, "");
+        result.put("subjectId", "other-user");
+        assertThrows(Exception.class, () -> RecordingPayloads.validateResponse(job, result, ""));
+        result.remove("subjectId");
+        assertThrows(Exception.class, () -> RecordingPayloads.validateResponse(job, result, ""));
+    }
+
     @Test public void uploadUsesCandidateNotSubjectAndUtcTimes() throws Exception {
         JSONObject data = new JSONObject().put("intervalId", "local").put("owner", "subject")
                 .put("candidateId", "verified-candidate").put("startedAt", 1794013200000L)
@@ -18,6 +31,16 @@ public class RecordingPayloadsTest {
         assertFalse(wire.has("owner"));
         data.remove("candidateId");
         assertTrue(RecordingPayloads.upload(data).isNull("userConsentId"));
+    }
+    @Test public void evLedgerCandidatesKeepTheirIdsInUpload() throws Exception {
+        JSONObject candidate = new JSONObject().put("id", "charge-1").put("estimatedKwh", 12).put("status", "CANDIDATE");
+        JSONObject data = new JSONObject().put("intervalId", "local").put("startedAt", 1000)
+                .put("endedAt", 2000).put("distanceKm", 0).put("evDetected", true)
+                .put("chargeCandidates", new JSONArray().put(candidate));
+        JSONObject wire = RecordingPayloads.upload(data);
+        assertTrue(wire.getBoolean("evDetected"));
+        assertEquals("charge-1", wire.getJSONArray("chargeCandidates").getJSONObject(0).getString("id"));
+        assertFalse(wire.getJSONArray("chargeCandidates").getJSONObject(0).has("estimatedAmount"));
     }
     @Test public void sendsDeltaAndExplicitGapsInsteadOfTotalOdometer() throws Exception {
         assertEquals(.125, RecordingPayloads.sample(48200.625f, 48200.5, 0).getDouble("distanceKm"), 0);

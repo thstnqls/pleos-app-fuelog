@@ -36,11 +36,12 @@ final class DeviceStatus {
         long now = System.currentTimeMillis();
         if (!reading && now >= nextRead) {
             nextRead = now + 15000; reading = true;
-            String proof = connection.personalToken();
-            connection.request("GET", "vehicle/home", null, "", true, new ApiClient.ResultCallback() {
+            connection.refreshIdentity(() -> {});
+            String subject = connection.authenticatedSubject;
+            connection.request("GET", "vehicle/home", null, "", new ApiClient.ResultCallback() {
                 public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
                     reading = false;
-                    try { if (proof.equals(connection.personalToken())) {
+                    try { if (!subject.isEmpty() && subject.equals(connection.authenticatedSubject)) {
                         JSONObject home = new JSONObject(response.getBody());
                         java.time.Instant.parse(home.getString("generatedAt"));
                         home.getString("recordingStatus");
@@ -51,8 +52,8 @@ final class DeviceStatus {
                 public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> reading = false); }
                 public void onFailure(java.io.IOException error) { main.post(() -> reading = false); }
             });
-            connection.request("GET", "sync/status", null, "", false, snapshot("sync"));
-            connection.request("GET", "installation/sync-status", null, "", false, snapshot("queue"));
+            connection.request("GET", "sync/status", null, "", snapshot("sync"));
+            connection.request("GET", "installation/sync-status", null, "", snapshot("queue"));
         }
         if (now < nextTelemetry) return;
         nextTelemetry = now + 60000;
@@ -61,7 +62,7 @@ final class DeviceStatus {
                 sendingOdometer = true;
                 String id = store.getString("odometerId", "");
                 connection.request("PUT", "vehicle-odometer/samples/" + id,
-                        new JSONObject(store.getString("odometerBody", "{}")), "", false, new ApiClient.ResultCallback() {
+                        new JSONObject(store.getString("odometerBody", "{}")), "", new ApiClient.ResultCallback() {
                     public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
                         sendingOdometer = false;
                         try {
@@ -78,7 +79,7 @@ final class DeviceStatus {
                 sendingFeatures = true;
                 JSONObject features = new JSONObject().put("fuel", fuel).put("distance", distance).put("location", "UNKNOWN");
                 connection.request("PUT", "installation/capabilities", new JSONObject().put("observedAt", now)
-                        .put("features", features), "", false, new ApiClient.ResultCallback() {
+                        .put("features", features), "", new ApiClient.ResultCallback() {
                     public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> sendingFeatures = false); }
                     public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> sendingFeatures = false); }
                     public void onFailure(java.io.IOException error) { main.post(() -> sendingFeatures = false); }

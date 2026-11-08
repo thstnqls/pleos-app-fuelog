@@ -4,6 +4,16 @@
 [배포 Swagger](http://sheetnews.ddns.net:3001/swagger-ui/index.html)의 `/v3/api-docs`.
 Swagger에는 C01~C04와 기존 페어링/일부 모바일 API만 있다. C05~C07은 제공된 계약 기준으로 연결했으며 배포 서버 검증이 필요하다.
 
+
+## 2026-11-08 사용자 유지·차량 기본정보 계약
+
+- 시작 화면은 QR 연결과 차량 기본정보 탭으로 분리한다. 공동 정비는 설치 인증과 차량 등록만 필요하며 사용자 연결을 요구하지 않는다.
+- `GET installations/me`는 차량 식별 `vehicle_id`/`vehicle_name`과 사용자 연결 `paired`/`authenticated_user_id`/`authenticated_user_name`을 구분한다.
+- 페어링 사용자는 추가 구간 QR 없이 유지한다. 운행 시작 본문의 `subjectId`는 조회한 인증 사용자이며 서버가 일치 여부를 검사한 뒤 구간에 고정한다.
+- USER 연결 끊기는 개인 접근과 완료된 페어링을 폐기하지만 차량 등록·공동 정비·기존 기록은 유지한다. 같은 차량으로 새 사용자가 재페어링한다.
+- 새 운행 요약은 `userConsentId=null`이며 서버 구간의 고정 소유자를 사용한다. 개인 요약 열람은 현재 사용자와 소유자가 같아야 한다.
+- 아래의 구간 QR·candidates·verify·짧은 사용자 세션 설명은 이전 클라이언트 호환용이다. 신규 차량 앱에서는 호출하지 않는다.
+
 ## 주소·인증
 
 - `API_BASE_URL`은 서버 루트다. 예: debug `http://sheetnews.ddns.net:3001/`. `/api`를 추가하지 않는다. release에는 HTTPS 주소가 필요하다.
@@ -41,6 +51,8 @@ Swagger에는 C01~C04와 기존 페어링/일부 모바일 API만 있다. C05~C0
 | SDK 기능 보고 | PUT `installation/capabilities` | 성공 여부. 연료·거리의 실제 수신 여부를 보고; 위치는 UNKNOWN |
 | 서버 수신 상태 | GET `sync/status` | lastAcceptedSequence, lastSyncedAt |
 | 사용자별 큐 확인 | GET `installation/sync-status` | 별도 상태로 보관. 로컬 업로드 큐나 서버 수신 sequence와 합치지 않음 |
+
+홈·차량 기본정보·정비의 `차량 총 누적거리`는 사용자 연결이나 운행 기록 시작 없이 차량 API에서 직접 읽는다. 화면 이용이 허용되면 1회 조회하고, `누적거리 구독 시작`으로 변경값을 실시간 반영한다. 구독은 명시적 중지·앱 화면 이탈·차량 UX 제한 시 해제한다. 서버 정비 요약의 `서버에 저장된 누적거리`와 구분하며, 직접 조회·구독 자체가 운행 기록이나 서버 정비 이력을 생성하지는 않는다.
 
 `trip-user/revoke`는 consentId를 가진 호출자를 위한 API다. 현재 장치 후보/검증 DTO는 consentId를 제공하지 않아 장치 화면에서 candidateId를 대신 보내지 않는다. 장치의 사용자 해제는 C07을 사용한다. 모바일은 본인의 consentId와 Supabase JWT로 revoke를 호출해야 한다.
 

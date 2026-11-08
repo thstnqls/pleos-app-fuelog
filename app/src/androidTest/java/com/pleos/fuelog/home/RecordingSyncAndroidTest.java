@@ -28,13 +28,13 @@ public class RecordingSyncAndroidTest {
         try {
             ConnectionSession connection = ConnectionSession.get(isolated);
             RecordingSync first = new RecordingSync(isolated, connection);
-            first.start("local-test", 1794013200000L);
+            first.start("local-test", 1794013200000L, "");
             first.sample("local-test", RecordingPayloads.sample(48200.625f, 48200.5, 1794013203000L), "candidate-test");
             JSONObject before = new JSONObject(new EncryptedJsonStore(file).read());
             String batch = before.getJSONArray("jobs").getJSONObject(1).getJSONObject("body").getString("batchId");
             assertFalse(new String(Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8).contains("candidate-test"));
             RecordingSync restored = new RecordingSync(isolated, connection);
-            restored.start("local-test", 1794013200000L);
+            restored.start("local-test", 1794013200000L, "");
             assertEquals(2, restored.pendingCount());
             restored.sample("local-test", RecordingPayloads.sample(null, 48200.625, 1794013206000L), "candidate-test");
             JSONObject snapshot = new JSONObject().put("intervalId", "local-test").put("candidateId", "candidate-test")

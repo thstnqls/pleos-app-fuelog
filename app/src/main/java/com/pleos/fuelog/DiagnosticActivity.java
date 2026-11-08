@@ -72,7 +72,8 @@ public final class DiagnosticActivity extends AppCompatActivity {
         setTitle(R.string.diagnostic_title);
         // Sensor values and optional location/VIN stay in memory and out of screenshots/backups.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        activeTab = savedInstanceState == null ? TAB_FUEL : savedInstanceState.getInt("diagnostic.category", TAB_FUEL);
+        activeTab = savedInstanceState == null ? getIntent().getIntExtra("diagnostic.category", TAB_FUEL)
+                : savedInstanceState.getInt("diagnostic.category", TAB_FUEL);
         if (savedInstanceState != null && "location.last".equals(savedInstanceState.getString("location.permission.key"))) {
             requestedLocationKey = "location.last";
         }

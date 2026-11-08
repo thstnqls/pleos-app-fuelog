@@ -25,6 +25,8 @@ public final class ConnectionSession {
     private static ConnectionSession instance;
     public String state = "IDLE", requestId = "", payload = "", message = "";
     public boolean linked;
+    public String authenticatedSubject = "", authenticatedName = "";
+    public String vehicleId = "", vehicleName = "";
     private long deadline;
     private boolean busy;
     private String operation;
@@ -35,8 +37,6 @@ public final class ConnectionSession {
     private final ApiStatus unavailable = new ApiStatus();
     private ApiClient api;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private String scopedToken = "";
-    private long sessionExpiresAt;
     public volatile JSONObject home = new JSONObject();
     public JSONObject syncStatus = new JSONObject(), queueStatus = new JSONObject();
     public Runnable onPersonalInvalid = () -> {};
@@ -68,6 +68,11 @@ public final class ConnectionSession {
         } catch (Exception e) { message = "연결 서버 설정을 확인해 주세요"; state = "ERROR"; }
     }
 
+    public void refreshIdentity(Runnable changed) {
+        if (busy || api == null || !usesIssuedInstallation()) return;
+        pairingRequest("GET", "installations/me", null, changed);
+    }
+
     public boolean hasServer() { return api != null; }
 
     public ApiStatus apiStatus() { return api == null ? unavailable : api.status; }
@@ -78,12 +83,14 @@ public final class ConnectionSession {
 
     // 2. 차량 연결: 설치 등록 → QR 발급·조회 → 차량에서 확인.
     public void refresh(boolean online, Runnable changed) {
-        if (!online || busy || api == null || linked || state.equals("ERROR")) return;
+        if (!online || busy || api == null || linked) return;
+        // Server status wins over the QR countdown, including completion while the screen was away.
+        if (usesIssuedInstallation()) { refreshPairing(false, changed); return; }
+        if (state.equals("ERROR")) return;
         if (state.equals("WAITING") && remaining() == 0) {
             state = "EXPIRED"; payload = ""; changed.run(); return;
         }
         if (credential.isEmpty()) { issueInstallation(changed); return; }
-        if (usesIssuedInstallation()) { refreshPairing(false, changed); return; }
         if (state.equals("IDLE")) send("connection/requests", changed);
         else if (state.equals("WAITING")) send("connection/requests/status", changed);
     }
@@ -123,7 +130,8 @@ public final class ConnectionSession {
     }
 
     private void refreshPairing(boolean retry, Runnable changed) {
-        if (!restored) { pairingRequest("GET", "installations/me", null, changed); return; }
+        // A failed read must not permanently stop polling or issue a replacement QR.
+        if (!restored || state.equals("ERROR")) { pairingRequest("GET", "installations/me", null, changed); return; }
         if (state.equals("WAITING") || state.equals("AWAITING_CONFIRMATION")) {
             pairingRequest("GET", "pairing-requests/" + requestId, null, changed);
         } else if (state.equals("IDLE") || retry) {
@@ -157,6 +165,16 @@ public final class ConnectionSession {
                     if (path.equals("installations/me")) {
                         if (!installationId.equals(value.getString("installation_id"))) throw new IllegalArgumentException();
                         restored = true; linked = value.getBoolean("paired");
+                        vehicleId = value.isNull("vehicle_id") ? "" : UUID.fromString(value.getString("vehicle_id")).toString();
+                        vehicleName = value.optString("vehicle_name", "등록된 차량");
+                        String previousSubject = authenticatedSubject;
+                        authenticatedSubject = linked && !value.isNull("authenticated_user_id")
+                                ? UUID.fromString(value.getString("authenticated_user_id")).toString() : "";
+                        if (!previousSubject.isEmpty() && !previousSubject.equals(authenticatedSubject)) {
+                            home = new JSONObject();
+                            onPersonalInvalid.run();
+                        }
+                        authenticatedName = authenticatedSubject.isEmpty() ? "" : value.optString("authenticated_user_name", "QR 인증 사용자");
                         if (linked) { state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
                         else { pairingRequest("GET", "pairing-requests/current", null, changed); return; }
                     } else if (path.equals("pairing-requests") && method.equals("POST")) {
@@ -200,6 +218,9 @@ public final class ConnectionSession {
                     operation = UUID.randomUUID().toString();
                     state = "EXPIRED"; message = "QR 발급 키가 이미 사용되었거나 연결된 설치입니다. 상태를 다시 확인해 주세요";
                     restored = false; changed.run(); return;
+                }
+                if (response.getStatusCode() == 401 || response.getStatusCode() == 403) {
+                    clearPersonal(); onPersonalInvalid.run();
                 }
                 connectionFailed("차량 연결 필요 · HTTP " + response.getStatusCode(), changed);
             }); }
@@ -246,26 +267,17 @@ public final class ConnectionSession {
         } catch (Exception e) { busy = false; state = "ERROR"; message = "연결 요청을 만들지 못했습니다"; changed.run(); }
     }
 
-    // 3. 개인 홈 인증: 승인된 세션을 활성화하고 만료·해제를 반영한다.
-    public void activatePersonal(JSONObject session) throws Exception {
-        if (!"ACTIVE".equals(session.getString("status"))) return;
-        long expiry = Instant.parse(session.getString("expiresAt")).toEpochMilli();
-        String token = session.getString("scopedToken");
-        if (expiry <= System.currentTimeMillis() || token.isEmpty()) throw new IllegalArgumentException();
-        scopedToken = token; sessionExpiresAt = expiry; home = new JSONObject();
+    // 3. 사용자 연결 해제: 개인 화면 데이터와 인증된 사용자 표시를 지운다.
+    public void clearPersonal() {
+        authenticatedSubject = "";
+        authenticatedName = "";
+        home = new JSONObject();
     }
-
-    public String personalToken() {
-        if (!scopedToken.isEmpty() && sessionExpiresAt <= System.currentTimeMillis()) clearPersonal();
-        return scopedToken;
-    }
-
-    public void clearPersonal() { scopedToken = ""; sessionExpiresAt = 0; home = new JSONObject(); }
 
     // 4. 연결 후 API 사용: 설치 인증과 요청별 사용자 증명을 전달한다.
     public Call request(String method, String path, JSONObject body, String candidate,
-                                boolean personal, ApiClient.ResultCallback callback) {
-        return requestWithSession(method, path, body, candidate, personal ? personalToken() : "", callback);
+                                ApiClient.ResultCallback callback) {
+        return requestWithSession(method, path, body, candidate, "", callback);
     }
 
     public Call requestWithSession(String method, String path, JSONObject body, String candidate,
@@ -289,13 +301,13 @@ public final class ConnectionSession {
 
     public Call requestUser(String path, String body, ApiClient.ResultCallback callback) {
         if (api == null || !linked) throw new IllegalStateException("Vehicle connection required");
-        try { return request("POST", path, new JSONObject(body), "", false, callback); }
+        try { return request("POST", path, new JSONObject(body), "", callback); }
         catch (JSONException error) { throw new IllegalArgumentException("Invalid JSON", error); }
     }
 
-    public Call readVehicle(String path, ApiClient.ResultCallback callback) {
-        if (api == null || !linked) throw new IllegalStateException("Vehicle connection required");
-        return request("GET", path, null, "", false, callback);
+    public Call readMaintenance(ApiClient.ResultCallback callback) {
+        if (api == null || vehicleId.isEmpty()) throw new IllegalStateException("Vehicle registration required");
+        return api.request("GET", "maintenance/summary", null, credential, null, callback);
     }
 
     public Call manage(String path, String body, ApiClient.ResultCallback callback) {
@@ -305,8 +317,9 @@ public final class ConnectionSession {
 
     // 5. 차량 등록 초기화: 개인 세션과 연결 화면 상태를 정리한다.
     public void registrationReset() throws Exception {
-        operation = UUID.randomUUID().toString(); persist();
+        operation = UUID.randomUUID().toString();
         restored = false; clearPersonal(); linked = false; state = "IDLE"; requestId = ""; payload = ""; deadline = 0;
+        persist();
     }
 
     // 공통 처리: 설치 인증 저장과 연결 오류 안내.
@@ -320,6 +333,7 @@ public final class ConnectionSession {
     }
 
     private void connectionFailed(String text, Runnable changed) {
-        busy = false; state = "ERROR"; message = text; payload = ""; changed.run();
+        // Hide the QR through ERROR, but retain its proof so a failed poll can resume the same request.
+        busy = false; state = "ERROR"; message = text; changed.run();
     }
 }

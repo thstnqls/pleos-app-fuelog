@@ -18,6 +18,20 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class DiagnosticComparisonUiTest {
+    @Test public void basicInfoEntryOpensTheRequestedSensorTab() {
+        android.content.Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        for (int category : new int[]{1, 2}) {
+            android.content.Intent intent = new android.content.Intent(target, DiagnosticActivity.class)
+                    .putExtra("diagnostic.category", category);
+            try (ActivityScenario<DiagnosticActivity> scenario = ActivityScenario.launch(intent)) {
+                scenario.onActivity(activity -> {
+                    TabLayout tabs = activity.findViewById(android.R.id.content).findViewWithTag("diagnostic.tabs");
+                    assertEquals(category, tabs.getSelectedTabPosition());
+                });
+            }
+        }
+    }
+
     @Test public void standardConstructorCreatesAUsableReadingView() {
         try (ActivityScenario<DiagnosticActivity> scenario = ActivityScenario.launch(DiagnosticActivity.class)) {
             scenario.onActivity(activity -> {

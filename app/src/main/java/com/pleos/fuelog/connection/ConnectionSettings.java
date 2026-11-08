@@ -61,7 +61,7 @@ public final class ConnectionSettings {
                         if (revoke) {
                             if (!store.getString("operation", "").equals(value.getString("operationId"))) throw new IllegalArgumentException();
                             if (value.getString("status").equals("COMPLETED")) {
-                                if (pending().equals("VEHICLE")) connection.registrationReset();
+                                connection.registrationReset();
                                 recorder.remoteDisconnected();
                                 if (!store.edit().remove("pending").remove("operation").commit()) throw new IOException();
                                 snapshot = new JSONObject(); message = "서버 연결 해제 완료";
@@ -74,9 +74,13 @@ public final class ConnectionSettings {
                     } catch (Exception e) { connection.apiStatus().invalid("POST", path); message = "연결 필요 · 서버 응답 확인 실패 · 요청을 유지합니다"; }
                     changed.run();
                 }); }
-                public void onHttpError(ApiClient.ApiResponse result) { fail(); }
-                public void onFailure(IOException error) { fail(); }
-                private void fail() { main.post(() -> { busy = false; message = "서버 연결 실패 · 해제 요청은 보관됩니다"; changed.run(); }); }
+                public void onHttpError(ApiClient.ApiResponse result) {
+                    fail(result.getStatusCode() == 404
+                            ? "서버 API 없음 · HTTP 404 · 백엔드 배포를 확인해 주세요 · 해제 요청은 보관됩니다"
+                            : "서버 요청 실패 · HTTP " + result.getStatusCode() + " · 해제 요청은 보관됩니다");
+                }
+                public void onFailure(IOException error) { fail("서버 연결 실패 · 해제 요청은 보관됩니다"); }
+                private void fail(String detail) { main.post(() -> { busy = false; message = detail; changed.run(); }); }
             });
         } catch (Exception e) { busy = false; message = "서버 설정을 확인해 주세요 · 해제 요청은 보관됩니다"; changed.run(); }
         changed.run();

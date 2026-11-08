@@ -39,7 +39,10 @@ public final class RecordingPayloads {
         switch (kind) {
             case "start":
                 if (!job.getString("localId").equals(result.getString("localIntervalId"))) throw new IllegalArgumentException();
-                UUID.fromString(result.getString("id")); break;
+                UUID.fromString(result.getString("id"));
+                if (!sent.isNull("subjectId") && !sent.getString("subjectId").equals(result.getString("subjectId")))
+                    throw new IllegalArgumentException("Recording owner mismatch");
+                break;
             case "samples":
                 if (!id.equals(result.getString("intervalId")) || !sent.getString("batchId").equals(result.getString("batchId"))
                         || result.getInt("acceptedCount") < 1
@@ -76,7 +79,8 @@ public final class RecordingPayloads {
                 .put("fuelEndpointsValid", data.optBoolean("fuelEndpointsValid"))
                 .put("refueled", data.optBoolean("refueled")).put("ownerChanged", data.optBoolean("ownerChanged"))
                 .put("priceValid", data.optBoolean("priceValid"));
-        for (String key : new String[]{"startFuelLiters", "endFuelLiters", "unitPrice", "currency", "priceSource"})
+        for (String key : new String[]{"startFuelLiters", "endFuelLiters", "unitPrice", "currency", "priceSource",
+                "evDetected", "evMissing", "evEndpointsValid", "consumedKwh", "chargedDuringInterval", "chargeCandidates"})
             if (data.has(key)) result.put(key, data.get(key));
         if (data.optLong("priceObservedAt") > 0) result.put("priceObservedAt", iso(data.getLong("priceObservedAt")));
         return result;

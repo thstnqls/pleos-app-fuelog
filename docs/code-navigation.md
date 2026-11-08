@@ -1,6 +1,6 @@
 # 사용자 흐름별 코드 안내
 
-2026-11-07 기준. `app/src/main/java`의 Java 소스와 Manifest·빌드 설정·관련 테스트를 확인했다.
+2026-11-08 기준. `app/src/main/java`의 Java 소스와 Manifest·빌드 설정·관련 테스트를 확인했다.
 차량 한 대에서 전경 화면을 사용하는 현재 구조를 기준으로 정리했다.
 화면·기록·연결·인증 클래스의 번호 주석은 각 클래스 안에서 읽는 순서다.
 
@@ -13,18 +13,19 @@
 | 앱 실행·복귀 | `onCreate`, `onStart` | `ConnectionSession.get`, `HomeRecorder.get` |
 | 차량 연결 QR 확인·승인 | `renderConnect` | `ConnectionSession.refresh` → `issueInstallation` → `refreshPairing` → `confirmPairing` |
 | 이번 운행 기록 시작 | `renderHome` | `HomeRecorder.toggle` → `RecordingSync.start` |
-| 모바일 동의·사용자 확인 | `renderUser`, `loadUserCandidates` | `TripUserSession.challenge` → `load` → `selection` → `confirm` → `HomeRecorder.assignUser` |
-| 개인 홈 인증 | `renderUser` | `TripUserSession.challenge` → `pollPersonal` → `ConnectionSession.activatePersonal` |
+| 페어링 사용자 유지 | `renderHome` | `ConnectionSession.refreshIdentity` → `HomeRecorder.reconcileUser` |
+| 연결 없는 공동 정비 조회 | `renderConnect`의 차량 기본정보 탭 | `loadMaintenance` → `ConnectionSession.readMaintenance` |
 | 운행 중 거리·연료 수집 | `startLiveRecorder` | `HomeRecorder.resume` → `tick` → `read` / `readFuel` |
 | 운행 기록 종료 | `renderHome` | `HomeRecorder.toggle` → `endForSwitch` → `RecordingSync.finish` |
 | 운행 요약·모바일 전달 | `renderTrip` | `HomeRecorder.summary`, `serverSummary`, `enqueueMobile` → `RecordingSync.deliver` |
 | 주유 후보 확인·전달 | `renderFuel`, `syncFuel`, `searchStations` | `HomeRecorder.fuelCandidate`, `queueFuel`, `updateFuel` → `FuelCandidates` |
 | 정비 예정 확인 | `renderMaintenance`, `loadMaintenance` | `MaintenanceSummary`, `MaintenanceSummary.Item.status` |
 | 사용자 연결 해제·차량 초기화 | `renderSettings`, `disconnect` | `ConnectionSettings.begin` → `retry` → `HomeRecorder.lockPersonalSession` → 서버 완료 확인 |
-| 화면 이탈 | `onStop` | `HomeRecorder.pause`, `TripUserSession.cancel`, 진행 요청 취소 |
+| 화면 이탈 | `onStop` | `HomeRecorder.pause`, 진행 요청 취소 |
 
-사용자 확인에는 서버에서 생성된 기록 구간이 필요하다. 홈에서 기록을 시작한 뒤 이번 운행 사용자를 확인한다.
-개인 홈 인증과 구간 사용자 확인은 백엔드의 scopedToken/candidateId를 사용한다. Supabase 로그인은 별도 모바일 앱에서 처리한다.
+사용자는 최초 페어링에서 결정한다. 구간 QR과 후보 선택 없이 이후 운행을 같은 사용자에게 기록한다.
+사용자 변경은 연결 끊기 후 재페어링으로 수행하며 과거 기록 소유자는 변경하지 않는다.
+기존 전송 큐의 candidateId는 과거 기록 재시도 호환을 위해 유지한다.
 
 ## 진단 화면
 

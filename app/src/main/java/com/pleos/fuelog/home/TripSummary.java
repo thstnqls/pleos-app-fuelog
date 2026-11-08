@@ -20,6 +20,18 @@ public final class TripSummary {
         return priceValid && Double.isFinite(liters) && liters > 0 && Double.isFinite(price) && price > 0
                 ? liters * price : Double.NaN;
     }
+    public double consumedKwh() {
+        double value = data.optDouble("consumedKwh", Double.NaN);
+        return data.optBoolean("evEndpointsValid") && !data.optBoolean("missing")
+                && !data.optBoolean("chargedDuringInterval") && !data.optBoolean("evMissing") && Double.isFinite(value) && value > 0 ? value : Double.NaN;
+    }
+    public double evEconomy() {
+        return data.optBoolean("distanceValid") ? efficiency(data.optDouble("distanceKm"), consumedKwh()) : Double.NaN;
+    }
+    public double evCost() {
+        return cost(consumedKwh(), data.optDouble("chargeUnitPriceWonPerKwh", Double.NaN),
+                data.optBoolean("chargePriceValid") && !data.optString("chargePriceSource").isEmpty());
+    }
     public double liters() {
         return consumption(data.optDouble("startFuelLiters", Double.NaN), data.optDouble("endFuelLiters", Double.NaN),
                 data.optBoolean("fuelEndpointsValid"), data.optBoolean("missing"),

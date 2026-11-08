@@ -38,13 +38,13 @@ public final class RecordingSync {
     public void resume(Runnable listener) { enabled = true; changed = listener; pump(); }
 
     // 2. 운행 기록: 시작 → 거리 샘플 → 종료·요약 순서로 전송 큐에 저장한다.
-    public void start(String localId, long at) throws Exception {
+    public void start(String localId, long at, String owner) throws Exception {
         JSONObject intervals = state.getJSONObject("intervals");
         if (intervals.has(localId)) return;
         intervals.put(localId, new JSONObject().put("sequence", 0));
-        JSONObject body = new JSONObject().put("localIntervalId", localId).put("startedAt", RecordingPayloads.iso(at)).put("source", "manual_app");
+        JSONObject body = new JSONObject().put("localIntervalId", localId).put("startedAt", RecordingPayloads.iso(at)).put("source", "manual_app").put("subjectId", owner.isEmpty() ? JSONObject.NULL : owner);
         // Freeze the start-time proof. A later approval must never reattribute an anonymous interval.
-        enqueue("POST", "recording-intervals", body, localId, "", connection.personalToken(), "start");
+        enqueue("POST", "recording-intervals", body, localId, "", "", "start");
     }
 
     public void sample(String localId, JSONObject sample, String candidate) throws Exception {
@@ -86,8 +86,9 @@ public final class RecordingSync {
     }
 
     public void deliver(String localId, String candidate) throws Exception {
-        if (candidate.isEmpty()) throw new IllegalStateException("Verified candidate required");
         JSONObject interval = state.getJSONObject("intervals").getJSONObject(localId);
+        if (candidate.isEmpty() && interval.optString("subjectId").isEmpty())
+            throw new IllegalStateException("Authenticated owner required");
         if (!interval.optBoolean("ended")) throw new IllegalStateException("Trip not finished");
         if (interval.optBoolean("deliveryQueued")) return;
         interval.put("deliveryQueued", true);
@@ -173,7 +174,10 @@ public final class RecordingSync {
                         JSONObject interval = state.getJSONObject("intervals").getJSONObject(localId);
                         String kind = job.getString("kind");
                         RecordingPayloads.validateResponse(job, result, id);
-                        if (kind.equals("start")) interval.put("id", result.getString("id"));
+                        if (kind.equals("start")) {
+                            interval.put("id", result.getString("id"));
+                            if (!result.isNull("subjectId")) interval.put("subjectId", result.getString("subjectId"));
+                        }
                         else if (kind.equals("summary") && requestPrivacy == privacyGeneration) interval.put("summary", result);
                         else if (kind.equals("deliver")) interval.put("delivered", true);
                         else if (kind.equals("fuel")) onFuelResponse.accept(result);
