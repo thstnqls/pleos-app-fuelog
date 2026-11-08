@@ -46,4 +46,32 @@ public class MaintenanceSummaryTest {
         assertEquals(2, result.items.size());
         assertFalse(result.hasRecentOdometer(System.currentTimeMillis()));
     }
+
+    @Test public void vehicleCycleIsShownBeforeAnyServiceHistoryExists() throws Exception {
+        JSONObject item = new JSONObject().put("name", "타이어 점검").put("basis", "USER")
+                .put("intervalKm", 10000).put("intervalMonths", 12);
+        MaintenanceSummary result = new MaintenanceSummary(new JSONObject().put("items", new org.json.JSONArray().put(item)));
+        MaintenanceSummary.Item cycle = result.items.get(0);
+        assertEquals(10000, cycle.intervalKm, 0);
+        assertEquals(Integer.valueOf(12), cycle.intervalMonths);
+        assertEquals("차량 설정", cycle.basis);
+        assertEquals("마지막 정비 기록을 확인해 주세요", cycle.status(result, LocalDate.of(2026, 11, 8), 0));
+        assertNull(cycle.nextDate); assertNull(cycle.nextKm);
+        item.put("intervalMonths", 1.5);
+        assertThrows(Exception.class, () -> new MaintenanceSummary(new JSONObject().put("items", new org.json.JSONArray().put(item))));
+        item.put("intervalMonths", 12).put("intervalKm", 0);
+        assertThrows(Exception.class, () -> new MaintenanceSummary(new JSONObject().put("items", new org.json.JSONArray().put(item))));
+    }
+    @Test public void replacementDaysCoverUpcomingTodayOverdueAndUnknownDates() throws Exception {
+        LocalDate today = LocalDate.of(2026, 11, 8);
+        MaintenanceSummary future = summary(0, 0, "2026-12-08", 10000);
+        assertEquals("교체 D-30 · 30일 남음", future.items.get(0).replacementDday(today));
+        MaintenanceSummary due = summary(0, 0, "2026-11-08", 10000);
+        assertEquals("교체 D-DAY · 오늘 교체 예정", due.items.get(0).replacementDday(today));
+        assertEquals("교체 D+3 · 3일 지남", due.items.get(0).replacementDday(today.plusDays(3)));
+        MaintenanceSummary unknown = new MaintenanceSummary(new JSONObject().put("items", new org.json.JSONArray()
+                .put(new JSONObject().put("name", "타이어").put("intervalKm", 10000))));
+        assertTrue(unknown.items.get(0).replacementDday(today).contains("확인 필요"));
+        assertFalse(unknown.canEdit);
+    }
 }

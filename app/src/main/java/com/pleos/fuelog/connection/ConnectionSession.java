@@ -305,6 +305,14 @@ public final class ConnectionSession {
         catch (JSONException error) { throw new IllegalArgumentException("Invalid JSON", error); }
     }
 
+    public Call requestMaintenance(String method, String path, JSONObject body, String revision, ApiClient.ResultCallback callback) {
+        if (api == null || !linked || authenticatedSubject.isEmpty() || vehicleId.isEmpty())
+            throw new IllegalStateException("Verified vehicle owner required");
+        Map<String, String> headers = new HashMap<>();
+        if (revision != null && !revision.isEmpty()) headers.put("If-Match", revision);
+        return api.request(method, path, body == null ? null : body.toString(), credential, headers, callback);
+    }
+
     public Call readMaintenance(ApiClient.ResultCallback callback) {
         if (api == null || vehicleId.isEmpty()) throw new IllegalStateException("Vehicle registration required");
         return api.request("GET", "maintenance/summary", null, credential, null, callback);

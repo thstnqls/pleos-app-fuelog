@@ -43,6 +43,7 @@ import com.pleos.fuelog.connection.ConnectionSettings;
 import com.pleos.fuelog.diagnostics.AaosVehicleDiagnosticService;
 import com.pleos.fuelog.home.HomeRecorder;
 import com.pleos.fuelog.home.MaintenanceSummary;
+import com.pleos.fuelog.home.MaintenancePlanEditor;
 import com.pleos.fuelog.home.TripState;
 import com.pleos.fuelog.home.TripSummary;
 import com.pleos.fuelog.home.FuelLocationEvidence;
@@ -83,6 +84,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     private Call fuelSyncCall;
     private String fuelSyncMessage = "";
     private MaintenanceSummary maintenanceSummary;
+    private MaintenancePlanEditor maintenanceEditor;
     private Call maintenanceCall;
     private int maintenanceGeneration;
     private String maintenanceMessage = "정비 정보를 확인 중입니다";
@@ -98,7 +100,8 @@ public final class CarHomeActivity extends AppCompatActivity {
                     if (!started || !allowed) return;
                     if (connection.linked) { page = HOME; startLiveRecorder(); }
                     render();
-                    if (startTab == 1 && !basicInfoLoaded && !connection.vehicleId.isEmpty()) {
+                    if (showingMaintenance() && (!basicInfoLoaded || !maintenanceVehicleId.equals(connection.vehicleId))
+                            && !connection.vehicleId.isEmpty()) {
                         basicInfoLoaded = true;
                         loadMaintenance();
                     }
@@ -192,7 +195,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         connection.apiStatus().changed = () -> connectionHandler.post(() -> {
             if (started && allowed) render();
         });
-        connection.onPersonalInvalid = () -> { recorder.clearPersonalCache(); if (started && allowed) render(); };
+        connection.onPersonalInvalid = () -> { closeMaintenanceEditor(); recorder.clearPersonalCache(); if (started && allowed) render(); };
         offerTripSummary = !recorder.trip.active && recorder.summary() != null;
         startLiveRecorder();
         connectionHandler.post(connectionTick);
@@ -208,6 +211,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 if (canUse) startVehicleOdometer();
                 else closeVehicleOdometer();
                 if (!canUse) {
+                    closeMaintenanceEditor();
                     cancelFuelSync(); cancelMaintenance();
                     if (apiAlert != null) { apiAlert.dismiss(); apiAlert = null; }
                 }
@@ -216,6 +220,10 @@ public final class CarHomeActivity extends AppCompatActivity {
                 status.setText(canUse ? "우리 차 · 정차 상태" : "주행 제한");
                 status.setBackground(shape(canUse ? R.color.car_accent_light : R.color.car_warning_bg, 24, 0));
                 render();
+                if (canUse && !wasAllowed && showingMaintenance()) {
+                    basicInfoLoaded = !connection.vehicleId.isEmpty();
+                    loadMaintenance();
+                }
             }));
         } catch (LinkageError error) {
             restrictions = null; allowed = false;
@@ -233,6 +241,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     // 2. 화면 이동: 현재 연결·사용자 상태에 맞는 화면을 표시한다.
     private void navigate(int destination) {
         if (!allowed) return;
+        closeMaintenanceEditor();
         if (!settings.pending().isEmpty()) destination = SETTINGS;
         if (destination != FUEL) cancelFuelSync();
         if (destination != MAINTENANCE) cancelMaintenance();
@@ -242,12 +251,13 @@ public final class CarHomeActivity extends AppCompatActivity {
             maintenanceMessage = "정비 정보를 확인 중입니다";
         }
         render();
-        if (page == MAINTENANCE) loadMaintenance();
+        if (showingMaintenance()) loadMaintenance();
         if (page == SETTINGS) settings.refresh(this::settingsChanged);
     }
 
     private void render() {
         if (body == null) return;
+        if (maintenanceEditor != null && (!allowed || !canEditMaintenance())) closeMaintenanceEditor();
         if (!connection.linked && page != SETTINGS) page = CONNECT;
         body.removeAllViews();
         navigation.removeAllViews();
@@ -298,7 +308,11 @@ public final class CarHomeActivity extends AppCompatActivity {
         tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override public void onTabSelected(TabLayout.Tab tab) {
                 startTab = tab.getPosition();
-                if (startTab == 1) { basicInfoLoaded = !connection.vehicleId.isEmpty(); loadMaintenance(); }
+                if (startTab == 1) {
+                    startVehicleOdometer();
+                    basicInfoLoaded = !connection.vehicleId.isEmpty();
+                    loadMaintenance();
+                }
                 else { cancelMaintenance(); render(); }
             }
             @Override public void onTabUnselected(TabLayout.Tab tab) {}
@@ -366,14 +380,17 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void startVehicleOdometer() {
-        if (vehicleOdometer != null) return;
+        if (!started || !allowed) return;
         try {
-            Vehicle vehicle = new Vehicle(this);
-            vehicle.initialize();
-            vehicleOdometer = new VehicleOdometer(vehicle.getOdometer(), () -> {
-                if (started && allowed) render();
-            });
-            vehicleOdometer.read();
+            if (vehicleOdometer == null) {
+                Vehicle vehicle = new Vehicle(this);
+                vehicle.initialize();
+                vehicleOdometer = new VehicleOdometer(vehicle.getOdometer(), () -> {
+                    if (started && allowed) render();
+                });
+                vehicleOdometer.read();
+            }
+            if (page == CONNECT && startTab == 1) vehicleOdometer.startUpdates();
         } catch (RuntimeException error) { vehicleOdometerMessage = "차량 거리 연결 실패 · 앱을 다시 열어 주세요"; }
     }
 
@@ -391,18 +408,18 @@ public final class CarHomeActivity extends AppCompatActivity {
         detail(current, "마지막 수신값", reading == null || reading.km == null ? "수신값 없음" : metric(reading.km, " km"));
         paragraph(current, reading == null ? vehicleOdometerMessage : reading.readStatus + " · " + reading.subscriptionStatus);
         if (reading != null && reading.observedAt > 0) paragraph(current, "차량에서 수신 · " + timeLabel(reading.observedAt));
-        Button refresh = button("누적거리 1회 조회", false, () -> { if (vehicleOdometer != null) vehicleOdometer.read(); });
-        refresh.setTag("vehicle.odometer.read");
+        /*Button refresh = button("누적거리 1회 조회", false, () -> { if (vehicleOdometer != null) vehicleOdometer.read(); });*/
+        /*refresh.setTag("vehicle.odometer.read");
         refresh.setEnabled(reading != null);
-        current.addView(refresh, fullButton());
-        Button subscribe = button(reading != null && reading.subscribed() ? "누적거리 구독 중지" : "누적거리 구독 시작", false, () -> {
+        current.addView(refresh, fullButton());*/
+        /*Button subscribe = button(reading != null && reading.subscribed() ? "누적거리 구독 중지" : "누적거리 구독 시작", false, () -> {
             if (vehicleOdometer == null) return;
             if (vehicleOdometer.subscribed()) vehicleOdometer.stopUpdates();
             else vehicleOdometer.startUpdates();
         });
         subscribe.setTag("vehicle.odometer.subscribe");
         subscribe.setEnabled(reading != null);
-        current.addView(subscribe, fullButton());
+        current.addView(subscribe, fullButton());*/
         paragraph(current, "사용자 연결·운행 기록과 관계없이 차량에서 직접 읽습니다. 앱 화면을 벗어나면 구독이 중지됩니다.");
     }
 
@@ -417,6 +434,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         paragraph(body, "현재 사용자 · " + recorder.displayUser());
         link(body, "연결 상태 확인", () -> navigate(SETTINGS));
         renderVehicleOdometer();
+        renderMaintenanceCycles();
         JSONObject homeDistance = connection.home.optJSONObject("distanceStatus");
         if (!connection.home.isNull("distanceKm") && homeDistance != null
                 && ("available".equals(homeDistance.optString("state")) || "stale".equals(homeDistance.optString("state"))))
@@ -699,9 +717,14 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     // 7. 정비 확인: 서버 요약을 읽고 날짜·거리 기준의 예정 정보를 표시한다.
     private void renderMaintenance() {
-        if (!maintenanceVehicleId.equals(connection.vehicleId)) maintenanceSummary = null;
         heading(body, "차량 관리");
         renderVehicleOdometer();
+        renderMaintenanceCycles();
+    }
+
+    private void renderMaintenanceCycles() {
+        if (!maintenanceVehicleId.equals(connection.vehicleId)) maintenanceSummary = null;
+        sectionLabel(body, "차량 공용 정비 주기");
         MaintenanceSummary summary = maintenanceSummary;
         if (summary == null) {
             paragraph(body, maintenanceMessage);
@@ -713,20 +736,19 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (summary.items.isEmpty()) {
                 paragraph(body, "공동 관리 정비 항목이 없습니다. 모바일에서 항목과 주기를 설정해 주세요.");
             } else {
-                LocalDate today = LocalDate.now();
+                LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
                 for (MaintenanceSummary.Item item : summary.items) {
                     LinearLayout card = section(body);
                     subheading(card, item.name);
+                    String cycle = item.intervalKm == null ? "" : maintenanceDistance(item.intervalKm);
+                    if (item.intervalMonths != null) cycle += (cycle.isEmpty() ? "" : " 또는 ") + item.intervalMonths + "개월";
+                    paragraph(card, cycle.isEmpty() ? "정비 주기 확인 필요" : "정비 주기 · " + cycle);
                     paragraph(card, "마지막 정비 · " + maintenanceDate(item.lastDate)
                             + " · " + maintenanceDistance(item.lastKm));
                     paragraph(card, "다음 예정 · " + maintenanceDate(item.nextDate)
                             + " · " + maintenanceDistance(item.nextKm));
                     paragraph(card, "주기 출처 · " + item.basis);
-                    if (item.nextDate != null) {
-                        long days = item.daysUntil(today);
-                        paragraph(card, days > 0 ? "남은 기간 " + days + "일" : days == 0
-                                ? "예정일 오늘" : "예정일 " + (-days) + "일 지남");
-                    }
+                    paragraph(card, item.replacementDday(today));
                     if (item.nextKm != null) {
                         Double remaining = item.kmUntil(summary, now);
                         paragraph(card, remaining == null ? "남은 거리 · 최신 거리 확인 필요"
@@ -740,11 +762,40 @@ public final class CarHomeActivity extends AppCompatActivity {
         Button refresh = button("정비 정보 새로 확인", false, this::loadMaintenance);
         refresh.setEnabled(online() && !connection.vehicleId.isEmpty());
         body.addView(refresh, fullButton());
+        if (canEditMaintenance()) {
+            Button manage = button("교체주기 관리", false, this::openMaintenanceEditor);
+            manage.setTag("maintenance.manage"); manage.setEnabled(online());
+            body.addView(manage, fullButton());
+        }
         if (page == MAINTENANCE) primary(body, "모바일에서 기록", () -> new AlertDialog.Builder(this)
                 .setTitle("모바일에서 기록")
                 .setMessage("휴대폰 fuelog 앱의 차계부에서 정비 기록을 등록하거나 정비 주기를 설정해 주세요.")
                 .setPositiveButton("확인", null).show());
-        paragraph(body, "정비 완료는 모바일에서 확인한 기록만 반영합니다. 예정일과 거리는 고장 진단 결과가 아닙니다.");
+        paragraph(body, "교체주기는 차량 공용 정보이며 오너 계정에서 변경할 수 있습니다. 확인된 마지막 교체 기록으로 다음 예정을 계산합니다.");
+    }
+
+    private boolean canEditMaintenance() {
+        return maintenanceSummary != null && maintenanceSummary.canEdit
+                && maintenanceVehicleId.equals(connection.vehicleId)
+                && !recorder.verifiedOwner().isEmpty()
+                && recorder.verifiedOwner().equals(maintenanceSummary.editorSubjectId)
+                && settings.pending().isEmpty();
+    }
+
+    private void openMaintenanceEditor() {
+        if (!started || !allowed || !online() || !canEditMaintenance()) return;
+        closeMaintenanceEditor();
+        String owner = recorder.verifiedOwner(), vehicle = connection.vehicleId;
+        maintenanceEditor = new MaintenancePlanEditor(this, connection,
+                () -> started && allowed && canEditMaintenance() && showingMaintenance()
+                        && owner.equals(recorder.verifiedOwner()) && vehicle.equals(connection.vehicleId),
+                this::loadMaintenance);
+        maintenanceEditor.show();
+    }
+
+    private void closeMaintenanceEditor() {
+        if (maintenanceEditor != null) maintenanceEditor.close();
+        maintenanceEditor = null;
     }
 
     private void loadMaintenance() {
@@ -797,7 +848,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private boolean showingMaintenance() {
-        return page == MAINTENANCE || page == CONNECT && startTab == 1;
+        return page == HOME || page == MAINTENANCE || page == CONNECT && startTab == 1;
     }
 
     private boolean maintenanceVisible(int generation) {
@@ -896,6 +947,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     // 9. 화면 종료: 요청·구독을 정리하고 기록 수집을 중단한다.
     @Override protected void onStop() {
         started = false;
+        closeMaintenanceEditor();
         closeVehicleOdometer();
         connection.apiStatus().changed = () -> {};
         if (apiAlert != null) { apiAlert.dismiss(); apiAlert = null; }

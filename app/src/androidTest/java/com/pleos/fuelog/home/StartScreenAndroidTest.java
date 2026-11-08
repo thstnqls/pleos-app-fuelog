@@ -41,7 +41,7 @@ public class StartScreenAndroidTest {
         Object previousSession = sessionInstance.get(null), previousRecorder = recorderInstance.get(null);
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(new MockResponse().setBody("{\"odometer\":null,\"items\":[{\"name\":\"Shared oil\",\"basis\":\"USER\"}]}"));
+            server.enqueue(new MockResponse().setBody("{\"odometer\":null,\"items\":[{\"name\":\"Shared oil\",\"basis\":\"USER\",\"intervalKm\":10000,\"intervalMonths\":12}]}"));
             var constructor = ConnectionSession.class.getDeclaredConstructor(Context.class, ApiClient.class);
             constructor.setAccessible(true);
             ConnectionSession connection = constructor.newInstance(isolated, new ApiClient(server.url("/").toString()));
@@ -88,9 +88,16 @@ public class StartScreenAndroidTest {
                 assertTrue("Shared maintenance should be visible without a paired user", loaded[0]);
                 scenario.onActivity(activity -> {
                     View root = activity.findViewById(android.R.id.content);
+                    assertTrue(contains(root, "차량 공용 정비 주기"));
+                    assertNull(root.findViewWithTag("maintenance.manage"));
+                    assertTrue(contains(root, "정비 주기 · 10,000 km 또는 12개월"));
+                    assertTrue(contains(root, "주기 출처 · 차량 설정"));
+                    assertTrue(contains(root, "마지막 정비 기록을 확인해 주세요"));
                     assertTrue(contains(root, "현재 차량 거리 확인  →"));
                     assertTrue(contains(root, "현재 배터리 확인  →"));
                     assertTrue(contains(root.findViewWithTag("vehicle.odometer"), "12,345.0 km"));
+                    assertEquals("Tab entry must subscribe once", 1, source.registrations);
+                    assertNotNull(source.listener);
                 });
                 assertFalse(connection.linked);
                 assertEquals("", connection.authenticatedSubject);
@@ -103,11 +110,9 @@ public class StartScreenAndroidTest {
                         render.setAccessible(true); render.invoke(activity);
                         View root = activity.findViewById(android.R.id.content);
                         assertTrue(contains(root.findViewWithTag("vehicle.odometer"), "12,345.0 km"));
-                        TextView subscribe = root.findViewWithTag("vehicle.odometer.subscribe");
-                        assertEquals("누적거리 구독 시작", subscribe.getText());
-                        subscribe.performClick();
-                        root = activity.findViewById(android.R.id.content);
-                        assertEquals("누적거리 구독 중지", ((TextView) root.findViewWithTag("vehicle.odometer.subscribe")).getText());
+                        assertTrue(contains(root, "정비 주기 · 10,000 km 또는 12개월"));
+                        assertNull(root.findViewWithTag("maintenance.manage"));
+                        assertEquals("Navigation must keep the existing subscription", 1, source.registrations);
                         assertFalse(HomeRecorder.get(isolated).trip.active);
                         source.listener.onDistanceDrivenUpdated(12346f);
                     } catch (Exception error) { throw new AssertionError(error); }
@@ -115,8 +120,66 @@ public class StartScreenAndroidTest {
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
                 scenario.onActivity(activity -> assertTrue(contains(
                         activity.findViewById(android.R.id.content).findViewWithTag("vehicle.odometer"), "12,346.0 km")));
+                String owner = UUID.randomUUID().toString();
+                server.enqueue(new MockResponse().setBody("{\"items\":[]}"));
+                scenario.onActivity(activity -> {
+                    try {
+                        connection.authenticatedSubject = owner;
+                        HomeRecorder.get(isolated).owner = owner;
+                        org.json.JSONObject common = new org.json.JSONObject().put("canEdit", true).put("editorSubjectId", owner)
+                                .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "Shared oil")
+                                        .put("intervalMonths", 12).put("nextDueDate", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(30).toString())));
+                        set(activity, "maintenanceSummary", new MaintenanceSummary(common));
+                        var render = CarHomeActivity.class.getDeclaredMethod("render"); render.setAccessible(true); render.invoke(activity);
+                        View root = activity.findViewById(android.R.id.content);
+                        assertTrue(contains(root, "교체 D-30 · 30일 남음"));
+                        assertNotNull(root.findViewWithTag("maintenance.manage"));
+                        root.findViewWithTag("maintenance.manage").performClick();
+                    } catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                assertEquals("/maintenance/plans", server.takeRequest(5, TimeUnit.SECONDS).getPath());
+                androidx.appcompat.app.AlertDialog[] form = {null};
+                boolean[] menuReady = {false};
+                long menuDeadline = android.os.SystemClock.elapsedRealtime() + 5000;
+                while (!menuReady[0] && android.os.SystemClock.elapsedRealtime() < menuDeadline) {
+                    scenario.onActivity(activity -> {
+                        try {
+                            Object editor = get(activity, "maintenanceEditor");
+                            menuReady[0] = editor != null && get(editor, "dialog") != null;
+                        } catch (Exception failure) { throw new AssertionError(failure); }
+                    });
+                    if (!menuReady[0]) android.os.SystemClock.sleep(25);
+                }
+                assertTrue(menuReady[0]);
+                scenario.onActivity(activity -> {
+                    try {
+                        Object editor = get(activity, "maintenanceEditor");
+                        androidx.appcompat.app.AlertDialog menu = (androidx.appcompat.app.AlertDialog) get(editor, "dialog");
+                        menu.getListView().performItemClick(menu.getListView().getChildAt(0), 0, 0);
+                        form[0] = (androidx.appcompat.app.AlertDialog) get(editor, "dialog");
+                        View fields = form[0].findViewById(android.R.id.content);
+                        findInput(fields, "정비 항목").setText("타이어");
+                        findInput(fields, "교체주기 개월 · 선택").setText("12");
+                        findInput(fields, "마지막 교체일 · YYYY-MM-DD · 선택").setText("2026-01-01");
+                    } catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                server.enqueue(new MockResponse().setBody("{\"revision\":1}"));
+                server.enqueue(new MockResponse().setBody(new org.json.JSONObject().put("canEdit", true).put("editorSubjectId", owner)
+                        .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "타이어").put("basis", "USER")
+                                .put("intervalMonths", 12).put("lastServiceDate", "2026-01-01").put("nextDueDate", "2027-01-01"))).toString()));
+                scenario.onActivity(activity -> form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick());
+                var write = server.takeRequest(5, TimeUnit.SECONDS);
+                assertEquals("PUT", write.getMethod());
+                assertTrue(write.getPath().startsWith("/maintenance/plans/"));
+                assertEquals("0", write.getHeader("If-Match"));
+                org.json.JSONObject submitted = new org.json.JSONObject(write.getBody().readUtf8());
+                assertTrue(submitted.getJSONObject("plan").getBoolean("shared"));
+                assertEquals(12, submitted.getJSONObject("plan").getInt("intervalMonths"));
+                assertEquals("2026-01-01", submitted.getString("lastServiceDate"));
+                assertEquals("/maintenance/summary", server.takeRequest(5, TimeUnit.SECONDS).getPath());
+                scenario.onActivity(activity -> assertFalse(form[0].isShowing()));
             }
-            assertEquals("Leaving the activity must unregister the vehicle stream", 1, source.unregistrations);
+            assertEquals("Leaving the activity must unregister the stream", 1, source.unregistrations);
         } finally {
             sessionInstance.set(null, previousSession); recorderInstance.set(null, previousRecorder);
             target.deleteSharedPreferences(prefix + "home_recording");
@@ -125,6 +188,20 @@ public class StartScreenAndroidTest {
             if (files != null) for (File file : files) Files.deleteIfExists(file.toPath());
             Files.deleteIfExists(directory.toPath());
         }
+    }
+    private static Object get(Object object, String name) throws Exception {
+        Field field = object.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(object);
+    }
+    private static android.widget.EditText findInput(View view, String label) {
+        if (view instanceof android.widget.EditText && label.contentEquals(view.getContentDescription())) return (android.widget.EditText) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.widget.EditText result = findInput(group.getChildAt(i), label);
+                if (result != null) return result;
+            }
+        }
+        return null;
     }
     private static void set(Object object, String name, Object value) throws Exception {
         Field field = object.getClass().getDeclaredField(name);

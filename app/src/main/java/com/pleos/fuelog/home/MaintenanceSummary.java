@@ -16,8 +16,12 @@ public final class MaintenanceSummary {
     public final Double odometerKm;
     public final long odometerObservedAt;
     public final List<Item> items;
+    public final boolean canEdit;
+    public final String editorSubjectId;
 
     public MaintenanceSummary(JSONObject response) throws JSONException {
+        canEdit = response.optBoolean("canEdit");
+        editorSubjectId = response.optString("editorSubjectId", "");
         JSONObject odometer = response.optJSONObject("odometer");
         Double km = odometer == null || odometer.isNull("km") ? null : odometer.optDouble("km", Double.NaN);
         if (km != null && (!Double.isFinite(km) || km < 0)) km = null;
@@ -41,6 +45,8 @@ public final class MaintenanceSummary {
         public final String name;
         public final LocalDate lastDate, nextDate;
         public final Double lastKm, nextKm;
+        public final Double intervalKm;
+        public final Integer intervalMonths;
         public final String basis;
 
         private Item(JSONObject value) throws JSONException {
@@ -50,13 +56,29 @@ public final class MaintenanceSummary {
             nextDate = date(value, "nextDueDate");
             lastKm = distance(value, "lastServiceKm");
             nextKm = distance(value, "nextDueKm");
+            intervalKm = distance(value, "intervalKm");
+            if (intervalKm != null && intervalKm <= 0) throw new JSONException("invalid intervalKm");
+            if (value.has("intervalMonths") && !value.isNull("intervalMonths")) {
+                double months = value.optDouble("intervalMonths", Double.NaN);
+                if (!Double.isFinite(months) || months < 1 || months > 1200 || months != Math.rint(months))
+                    throw new JSONException("invalid intervalMonths");
+                intervalMonths = (int) months;
+            } else intervalMonths = null;
             String source = value.optString("basis");
-            basis = source.equals("USER") ? "사용자 설정" : source.equals("MANUFACTURER")
+            basis = source.equals("USER") ? "차량 설정" : source.equals("MANUFACTURER")
                     ? "제조사 기준" : "기준 확인 필요";
         }
 
         public long daysUntil(LocalDate today) {
             return nextDate == null ? Long.MAX_VALUE : ChronoUnit.DAYS.between(today, nextDate);
+        }
+
+        public String replacementDday(LocalDate today) {
+            if (nextDate == null) return "교체 D-day · 마지막 교체일과 기간 주기 확인 필요";
+            long days = daysUntil(today);
+            return days > 0 ? "교체 D-" + days + " · " + days + "일 남음"
+                    : days == 0 ? "교체 D-DAY · 오늘 교체 예정"
+                    : "교체 D+" + (-days) + " · " + (-days) + "일 지남";
         }
 
         public Double kmUntil(MaintenanceSummary summary, long now) {
@@ -70,7 +92,8 @@ public final class MaintenanceSummary {
             if (dateDue && distanceDue) return "날짜·거리 기준 도래";
             if (dateDue) return "날짜 기준 도래";
             if (distanceDue) return "거리 기준 도래";
-            if (nextDate == null && nextKm == null) return "모바일에서 정비 주기를 설정해 주세요";
+            if (nextDate == null && nextKm == null) return intervalKm != null || intervalMonths != null
+                    ? "마지막 정비 기록을 확인해 주세요" : "모바일에서 정비 주기를 설정해 주세요";
             return "날짜 또는 거리 중 먼저 도달하면 정비 시기입니다";
         }
 
