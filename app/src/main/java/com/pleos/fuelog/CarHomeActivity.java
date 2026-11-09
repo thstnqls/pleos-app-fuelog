@@ -98,7 +98,13 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (allowed && page == CONNECT) {
                 connection.refresh(online(), () -> {
                     if (!started || !allowed) return;
-                    if (connection.linked) { page = HOME; startLiveRecorder(); }
+                    if (connection.linked) {
+                        page = HOME;
+                        startLiveRecorder();
+                        connection.refreshIdentity(() -> {
+                            if (started && allowed) render();
+                        });
+                    }
                     render();
                     if (showingMaintenance() && (!basicInfoLoaded || !maintenanceVehicleId.equals(connection.vehicleId))
                             && !connection.vehicleId.isEmpty()) {
@@ -106,7 +112,11 @@ public final class CarHomeActivity extends AppCompatActivity {
                         loadMaintenance();
                     }
                 });
-                if (connection.linked) page = HOME;
+                if (connection.linked) {
+                    page = HOME;
+                    startLiveRecorder();
+                    render();
+                }
                 if (connection.state.equals("WAITING") || connection.state.equals("AWAITING_CONFIRMATION")) render();
             }
             connectionHandler.postDelayed(this, 1000);
@@ -116,7 +126,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     // 1. 앱 진입·복귀: 저장된 연결을 복원하고 화면 이용 제한을 확인한다.
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        if (!BuildConfig.DEBUG) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (state != null) {
             page = state.getInt("page", HOME);
             startTab = state.getInt("startTab", 0);
@@ -336,7 +346,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         if (connection.linked) { link(body, "이미 연결된 기기 · 연결 설정", () -> navigate(SETTINGS)); return; }
         if (connection.state.equals("AWAITING_CONFIRMATION") && connection.remaining() > 0) {
             LinearLayout pairing = pairingCard(body);
-            pairingText(pairing, "휴대폰과 확인 코드를 비교하세요", 24, R.color.car_on_dark);
+            pairingText(pairing, "휴대폰에 확인 코드를 입력해 주세요", 24, R.color.car_on_dark);
             TextView code = label(connection.confirmationCode, 40, true, false);
             code.setTextColor(color(R.color.car_mint));
             code.setLetterSpacing(0.25f);
@@ -345,12 +355,24 @@ public final class CarHomeActivity extends AppCompatActivity {
             code.setBackground(shape(R.color.car_dark_box, 12, R.color.car_mint));
             pairing.addView(code, new LinearLayout.LayoutParams(-1, -2));
             pairingText(pairing, "연결할 차량 · " + connection.selectedVehicleName, 22, R.color.car_on_dark);
-            pairingText(pairing, "휴대폰의 차량과 코드가 같을 때 연결하세요.", 20, R.color.car_muted_dark);
-            primary(pairing, "코드가 같아요 · 차량 연결", () -> connection.confirmPairing(() -> {
+            pairingText(pairing, "휴대폰에서 코드를 입력하면 자동으로 화면이 넘어갑니다.", 20, R.color.car_muted_dark);
+            pairingText(pairing, "남은 시간 " + connection.remaining() + "초 · 입력 대기 중...", 20, R.color.car_mint);
+            primary(pairing, "차량에서 바로 승인", () -> connection.confirmPairing(() -> {
                 if (!started || !allowed) return;
-                if (connection.linked) { page = HOME; startLiveRecorder(); }
+                if (connection.linked) {
+                    page = HOME;
+                    startLiveRecorder();
+                    connection.refreshIdentity(() -> {
+                        if (started && allowed) render();
+                    });
+                }
                 render();
             }));
+            Button retry = button("QR 다시 찍기", false, () -> connection.retry(() -> {
+                if (started && allowed) render();
+            }));
+            retry.setTag("pairing.retry");
+            pairing.addView(retry, fullButton());
             return;
         }
         if (connection.state.equals("WAITING") && connection.remaining() > 0) {
@@ -362,7 +384,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             paragraph(steps, "1. 휴대폰 fuelog 앱 열기\n2. 차량 등록에서 QR 스캔\n3. 로그인 후 차량 확인");
             tag(steps, "휴대폰 승인 후 차량에서 최종 확인");
         } else {
-            paragraph(body, connection.state.equals("EXPIRED") ? "연결 코드가 만료되었습니다" :
+            paragraph(body, connection.state.equals("EXPIRED") || connection.remaining() == 0 ? "연결 코드가 만료되었습니다" :
                     connection.message.isEmpty() ? "연결 QR 준비 중" : connection.message);
             primary(body, "코드 다시 받기", () -> connection.retry(() -> { if (started && allowed) render(); }));
         }

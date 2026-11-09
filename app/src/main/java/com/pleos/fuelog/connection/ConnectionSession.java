@@ -132,16 +132,21 @@ public final class ConnectionSession {
     private void refreshPairing(boolean retry, Runnable changed) {
         // A failed read must not permanently stop polling or issue a replacement QR.
         if (!restored || state.equals("ERROR")) { pairingRequest("GET", "installations/me", null, changed); return; }
+        if (retry) {
+            operation = UUID.randomUUID().toString();
+            requestId = ""; payload = ""; deadline = 0; confirmationCode = ""; selectedVehicleName = "";
+            pairingRequest("POST", "pairing-requests", null, changed);
+            return;
+        }
         if (state.equals("WAITING") || state.equals("AWAITING_CONFIRMATION")) {
             pairingRequest("GET", "pairing-requests/" + requestId, null, changed);
-        } else if (state.equals("IDLE") || retry) {
-            if (retry && !state.equals("ERROR")) operation = UUID.randomUUID().toString();
+        } else if (state.equals("IDLE")) {
             pairingRequest("POST", "pairing-requests", null, changed);
         }
     }
 
     public void confirmPairing(Runnable changed) {
-        if (busy || !usesIssuedInstallation() || !state.equals("AWAITING_CONFIRMATION") || remaining() == 0) return;
+        if (!usesIssuedInstallation() || !state.equals("AWAITING_CONFIRMATION") || remaining() == 0) return;
         try { pairingRequest("POST", "pairing-requests/" + requestId + "/confirm",
                 new JSONObject().put("confirmation_code", confirmationCode), changed); }
         catch (Exception error) { connectionFailed("확인 코드 요청을 만들지 못했습니다", changed); }
@@ -160,6 +165,7 @@ public final class ConnectionSession {
                 null, headers, new ApiClient.ResultCallback() {
             public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
                 busy = false;
+                android.util.Log.d("FUELOG_DEBUG", method + " " + path + " -> " + response.getBody());
                 try {
                     JSONObject value = new JSONObject(response.getBody());
                     if (path.equals("installations/me")) {
