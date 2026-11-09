@@ -466,7 +466,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         LinearLayout current = card(layout);
         tag(current, connection.linked ? trip.status(System.currentTimeMillis()) : "연결 필요");
         subheading(current, "이번 운행 · 앱 기록 구간");
-        if (trip.sampledAt == 0) paragraph(current, "거리 수신 대기");
+        if (trip.sampledAt == 0) paragraph(current, trip.active ? "차량 거리 수신 대기" : "기록 시작 후 거리를 수집합니다");
         else number(current, String.format(Locale.KOREA, "%.1f", trip.distance), " km");
         paragraph(current, "마지막 샘플 · 최근 수신 " + timeLabel(trip.sampledAt));
         JSONObject cost = connection.home.optJSONObject("estimatedCost");
@@ -508,11 +508,26 @@ public final class CarHomeActivity extends AppCompatActivity {
                 + (end == 0 ? "기록 진행 중" : timeLabel(end)) + (data.optBoolean("endEstimated") ? " · 종료 시각 추정" : ""));
         LinearLayout distance = card(body);
         subheading(distance, "거리");
-        paragraph(distance, data.optBoolean("distanceValid") ? metric(data.optDouble("distanceKm"), " km") : "유효한 거리 샘플 부족");
+        paragraph(distance, data.optBoolean("distanceValid") ? metric(data.optDouble("distanceKm"), " km") : data.optLong("sampledAt") == 0 ? "차량 거리 수신 대기" : "첫 거리 수신 · 다음 샘플 대기");
         if (electric) {
-            detail(body, "추정 소모 전력량", metric(summary.consumedKwh(), " kWh"));
-            detail(body, "추정 전비", metric(summary.evEconomy(), " km/kWh"));
-            detail(body, "추정 전력비", Double.isFinite(summary.evCost()) ? metric(summary.evCost(), "원") : "충전 단가 확인 필요");
+            detail(body, "추정 소모 전력량", Double.isFinite(summary.consumedKwh()) ? metric(summary.consumedKwh(), " kWh") : batterySummaryReason(data));
+            detail(body, "추정 전비", Double.isFinite(summary.evEconomy()) ? metric(summary.evEconomy(), " km/kWh") : "유효한 거리와 소모 전력량 확인 필요");
+            detail(body, "추정 전력비", Double.isFinite(summary.evCost()) ? metric(summary.evCost(), "원") : !Double.isFinite(summary.consumedKwh()) ? "소모 전력량 확인 필요" : "확인된 충전 단가 없음");
+            if (data.has("chargePriceScenarios")) {
+                paragraph(body, "최근 모바일 확인 충전의 주변 사업자 참고요금 기준 · " + timeLabel(data.optLong("chargePriceObservedAt")));
+                JSONArray prices = data.optJSONArray("chargePriceScenarios");
+                if (prices != null && prices.length() > 1 && Double.isFinite(summary.consumedKwh())) {
+                    paragraph(body, "충전기 출력 미확정 · 출력별 추정 전력비");
+                    for (int i = 0; i < prices.length(); i++) {
+                        JSONObject price = prices.optJSONObject(i);
+                        if (price == null) continue;
+                        JSONArray stations = price.optJSONArray("stations");
+                        double rate = price.optDouble("averageWonPerKwh", Double.NaN);
+                        if (stations != null && stations.length() >= 2 && stations.length() <= 3 && Double.isFinite(rate) && rate > 0)
+                            detail(body, chargeBandLabel(price.optString("powerBand")), metric(summary.consumedKwh() * rate, "원"));
+                    }
+                }
+            }
             JSONArray charges = data.optJSONArray("chargeCandidates");
             if (charges != null) for (int i = 0; i < charges.length(); i++) {
                 JSONObject charge = charges.optJSONObject(i);
@@ -553,6 +568,16 @@ public final class CarHomeActivity extends AppCompatActivity {
         mobile.setEnabled(end != 0 && !data.optString("owner").isEmpty() && !recorder.mobileQueued(id));
         body.addView(mobile, fullButton());
         paragraph(body, "검증된 사용자 운행만 전달할 수 있습니다. 요약 업로드 후 모바일 확인함으로 전송합니다.");
+    }
+
+    private String batterySummaryReason(JSONObject data) {
+        if (checkSelfPermission("android.car.permission.CAR_ENERGY") != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            return "배터리 읽기 권한 필요 · 연결·설정에서 허용";
+        if (data.optBoolean("evMissing") || data.optBoolean("missing")) return "수신 누락 · 연속된 배터리 측정값 필요";
+        if (data.optBoolean("chargedDuringInterval")) return "운행 중 배터리 증가 · 소모량 계산 제외";
+        if (!data.optBoolean("evDetected")) return "D/R 기어의 시작 배터리 수신 대기";
+        if (!data.optBoolean("evEndpointsValid")) return "P 기어의 종료 배터리 수신 대기";
+        return "배터리 감소량 없음";
     }
 
     private void renderChargeEstimate(JSONObject charge) {
@@ -902,6 +927,11 @@ public final class CarHomeActivity extends AppCompatActivity {
         paragraph(body, "마지막 동기화 " + timeLabel(settings.snapshot.opt("lastSyncedAt")));
         sectionLabel(body, "데이터 제공 상태");
         detail(body, "연료", featureStatus("fuel"));
+        boolean batteryAllowed = checkSelfPermission("android.car.permission.CAR_ENERGY") == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        detail(body, "배터리 읽기 권한", batteryAllowed ? "허용됨" : "권한 필요");
+        if (!batteryAllowed) link(body, "배터리 읽기 권한 허용", () -> {
+            if (started && allowed) requestPermissions(new String[]{"android.car.permission.CAR_ENERGY"}, 102);
+        });
         detail(body, "거리", featureStatus("distance"));
         detail(body, "위치", featureStatus("location"));
         paragraph(body, settings.message);
@@ -930,6 +960,11 @@ public final class CarHomeActivity extends AppCompatActivity {
                     .setMessage("휴대폰 fuelog의 M04에서 자동 사용자 추천 설정을 변경한 뒤 상태를 새로 확인해 주세요.")
                     .setPositiveButton("확인", null).show());
         }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
+        super.onRequestPermissionsResult(requestCode, permissions, grants);
+        if (requestCode == 102 && started && allowed) render();
     }
 
     private void settingsChanged() {

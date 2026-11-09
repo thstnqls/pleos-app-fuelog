@@ -118,7 +118,7 @@ public final class HomeRecorder {
             } catch (Exception e) { storageError = "복구 기록 저장 실패"; }
         }
         save(false);
-        try { vehicle = new Vehicle(context.getApplicationContext()); } catch (RuntimeException ignored) { }
+        try { vehicle = new Vehicle(context.getApplicationContext()); vehicle.initialize(); } catch (RuntimeException ignored) { vehicle = null; }
     }
 
     // 2. 화면 복귀: 수집과 서버 동기화를 재개한다.
@@ -145,6 +145,7 @@ public final class HomeRecorder {
                 sync.start(intervalId, startedAt, owner);
                 candidateId = "";
                 ev.reset();
+                ev.setPriceReference(evIntervals, owner, startedAt);
                 trip.start();
             } catch (Exception e) { storageError = verifiedOwner().isEmpty() ? "페어링 사용자 확인 후 기록을 시작해 주세요" : "업로드 큐 저장 실패 · 기록 시작 보류"; }
         }
@@ -396,7 +397,7 @@ public final class HomeRecorder {
 
     private void saveEv() throws Exception {
         if (evIntervals == null) throw new IOException("Battery store unavailable");
-        evIntervals.put(intervalId, ev.snapshot());
+        evIntervals.put(intervalId, ev.snapshot().put("owner", owner));
         evStore.write(evIntervals.toString());
     }
 

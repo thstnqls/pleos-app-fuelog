@@ -5,6 +5,30 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class EvRecordingTest {
+    @Test public void confirmedPriceIsFrozenForSameUserAndProducesTripCost() throws Exception {
+        JSONObject scenario = new JSONObject().put("averageWonPerKwh", 350)
+                .put("stations", new org.json.JSONArray().put(new JSONObject()).put(new JSONObject()));
+        JSONObject charge = new JSONObject().put("id", "price-ref").put("status", "CONFIRMED")
+                .put("endAt", 500).put("syncedEndAt", 500).put("scenarios", new org.json.JSONArray().put(scenario));
+        JSONObject intervals = new JSONObject().put("old", new JSONObject().put("owner", "owner-a")
+                .put("chargeCandidates", new org.json.JSONArray().put(charge)));
+        EvRecording ev = new EvRecording();
+        ev.setPriceReference(intervals, "owner-b", 1000);
+        assertFalse(ev.snapshot().has("chargePriceValid"));
+        ev.setPriceReference(intervals, "owner-a", 1000);
+        scenario.put("averageWonPerKwh", 999);
+        ev.sample("D", 40, "WH", 1000); ev.sample("P", 36, "WH", 2000);
+        JSONObject data = ev.snapshot().put("distanceKm", 60).put("distanceValid", true);
+        assertEquals(1400, new TripSummary(data).evCost(), 0);
+        JSONObject upload = RecordingPayloads.upload(data.put("intervalId", "trip").put("startedAt", 1000).put("endedAt", 2000));
+        assertEquals(350, upload.getDouble("unitPrice"), 0);
+        assertTrue(upload.getBoolean("priceValid"));
+        ev.reset();
+        charge.put("status", "REJECTED");
+        ev.setPriceReference(intervals, "owner-a", 1000);
+        assertFalse(ev.snapshot().has("chargePriceScenarios"));
+    }
+
     @Test public void whPreferredAndPercentFallbackNeedsCapacity() {
         assertEquals(32, EvRecording.kwh(32000, 90, 60000), 0);
         assertEquals(30, EvRecording.kwh(Double.NaN, 50, 60000), 0);

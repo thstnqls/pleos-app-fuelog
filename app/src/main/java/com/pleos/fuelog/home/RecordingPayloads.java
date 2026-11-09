@@ -84,6 +84,12 @@ public final class RecordingPayloads {
             if (data.has(key)) result.put(key, data.get(key));
         if (data.optLong("priceObservedAt") > 0) result.put("priceObservedAt", iso(data.getLong("priceObservedAt")));
         if (data.optBoolean("evDetected")) {
+            if (data.optBoolean("chargePriceValid")) {
+                result.put("unitPrice", data.getDouble("chargeUnitPriceWonPerKwh"))
+                        .put("priceValid", true).put("currency", "KRW")
+                        .put("priceSource", data.getString("chargePriceSource"))
+                        .put("priceObservedAt", iso(data.getLong("chargePriceObservedAt")));
+            }
             JSONObject ev = new JSONObject().put("detected", true).put("endpointsValid", data.optBoolean("evEndpointsValid"))
                     .put("missing", data.optBoolean("evMissing")).put("chargedDuringInterval", data.optBoolean("chargedDuringInterval"));
             if (data.has("consumedKwh")) ev.put("consumedKwh", data.get("consumedKwh"));
