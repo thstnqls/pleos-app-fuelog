@@ -2,6 +2,34 @@ package com.pleos.fuelog.home;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class TripStateTest {
+    @Test public void driveStartsInDAndEndsOnlyInPark() {
+        TripState trip = new TripState();
+        assertFalse(trip.shouldStart("P"));
+        assertFalse(trip.shouldStart("R"));
+        assertTrue(trip.shouldStart("D"));
+        trip.start();
+        trip.sample(100, 1000);
+        assertFalse(trip.shouldStart("D"));
+        assertFalse(trip.shouldEnd("R"));
+        assertFalse(trip.shouldEnd(""));
+        trip.sample(112, 2000);
+        assertTrue(trip.shouldEnd("P"));
+        assertEquals(100, trip.startKm, 0);
+        assertEquals(112, trip.endKm, 0);
+        assertEquals(12, trip.distance, 0.001);
+        trip.stop();
+        assertFalse(trip.shouldEnd("P"));
+        assertTrue(trip.shouldStart("D"));
+    }
+
+    @Test public void distanceUsesSameMeterPrecisionAsWireSamples() {
+        TripState trip = new TripState(); trip.start();
+        trip.sample(1000f, 1000); trip.sample(1000.1f, 2000); trip.sample(1000.2f, 3000);
+        assertEquals(.200, trip.distance, 0);
+        trip.sample(3000, 4000);
+        assertTrue(trip.missing);
+        assertEquals(.200, trip.distance, 0);
+    }
     @Test public void countsOnlyObservedIntervalAndDoesNotBridgeGaps() {
         TripState trip = new TripState(); trip.start();
         trip.sample(100, 1000); trip.sample(102, 2000);

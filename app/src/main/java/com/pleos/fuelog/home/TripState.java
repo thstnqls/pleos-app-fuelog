@@ -1,9 +1,13 @@
 package com.pleos.fuelog.home;
 
-/** Distance belongs to an app recording interval, never an ignition interval. */
+/** A drive starts in D and ends in P. */
 public final class TripState {
     public boolean active, missing;
     public double distance;
+    public double startKm = Double.NaN, endKm = Double.NaN;
+
+    public boolean shouldStart(String gear) { return !active && "D".equals(gear); }
+    public boolean shouldEnd(String gear) { return active && "P".equals(gear); }
     public long sampledAt, savedAt;
     public int sampleCount;
     private double previous = Double.NaN;
@@ -11,6 +15,7 @@ public final class TripState {
     // 1. 기록 시작: 이전 구간의 거리와 수신 기준을 초기화한다.
     public void start() {
         active = true;
+        startKm = endKm = Double.NaN;
         sampleCount = 0;
         missing = false;
         distance = 0;
@@ -25,9 +30,14 @@ public final class TripState {
         if (!active) return;
         if (!Double.isFinite(km) || km < 0) { interrupt(); return; }
         if (Double.isFinite(previous)) {
-            if (km >= previous) distance += km - previous;
+            if (km >= previous && km - previous <= 1000) {
+                double delta = RecordingPayloads.decimalKm(km - previous).doubleValue();
+                distance = RecordingPayloads.decimalKm(distance + delta).doubleValue();
+            }
             else missing = true;
         }
+        if (sampleCount == 0) startKm = km;
+        endKm = km;
         previous = km;
         sampledAt = now;
         sampleCount++;
@@ -36,6 +46,7 @@ public final class TripState {
     // 3. 수집 중단·기록 종료: 다음 수신값이 누락 구간을 연결하지 않게 한다.
     public void interrupt() {
         if (active) missing = true;
+        endKm = Double.NaN;
         previous = Double.NaN;
     }
 

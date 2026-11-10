@@ -39,8 +39,18 @@ public class RecordingUserAndroidTest {
                 recorder[0].toggle();
                 assertTrue(recorder[0].trip.active);
                 assertEquals("user-a", recorder[0].verifiedOwner());
+                assertFalse(recorder[0].locationAssistDecisionMade());
+                try { recorder[0].setLocationAssistConsent(true); }
+                catch (Exception error) { throw new AssertionError(error); }
                 recorder[0].toggle();
                 recorder[0] = new HomeRecorder(isolated);
+                assertTrue(recorder[0].locationAssistDecisionMade());
+                assertTrue(recorder[0].locationAssistConsent());
+                try { recorder[0].setLocationAssistConsent(false); }
+                catch (Exception error) { throw new AssertionError(error); }
+                recorder[0] = new HomeRecorder(isolated);
+                assertTrue(recorder[0].locationAssistDecisionMade());
+                assertFalse(recorder[0].locationAssistConsent());
                 recorder[0].toggle();
                 assertEquals("user-a", recorder[0].verifiedOwner());
                 try {
@@ -51,6 +61,8 @@ public class RecordingUserAndroidTest {
                 connection.authenticatedName = "Driver B";
                 recorder[0].toggle();
                 assertEquals("user-b", recorder[0].verifiedOwner());
+                assertFalse(recorder[0].locationAssistDecisionMade());
+                assertFalse(recorder[0].locationAssistConsent());
             });
             JSONArray jobs = new JSONObject(new EncryptedJsonStore(new File(directory, "recording-outbox.bin")).read()).getJSONArray("jobs");
             int startsA = 0, startsB = 0;

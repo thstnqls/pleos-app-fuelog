@@ -32,6 +32,12 @@ public final class TripSummary {
         return cost(consumedKwh(), data.optDouble("chargeUnitPriceWonPerKwh", Double.NaN),
                 data.optBoolean("chargePriceValid") && !data.optString("chargePriceSource").isEmpty());
     }
+    public double referenceCost(JSONObject scenario) {
+        if (scenario == null) return Double.NaN;
+        org.json.JSONArray stations = scenario.optJSONArray("stations");
+        return cost(consumedKwh(), scenario.optDouble("averageWonPerKwh", Double.NaN),
+                stations != null && stations.length() >= 2 && stations.length() <= 3);
+    }
     public double liters() {
         return consumption(data.optDouble("startFuelLiters", Double.NaN), data.optDouble("endFuelLiters", Double.NaN),
                 data.optBoolean("fuelEndpointsValid"), data.optBoolean("missing"),

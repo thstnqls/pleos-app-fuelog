@@ -53,6 +53,7 @@ final class FuelStationEnrichment {
                     try {
                         evidence = FuelLocationEvidence.body(id, position.getLatitude(), position.getLongitude(),
                                 position.getTimestampMillis(), System.currentTimeMillis(), requested, fuelType, verifiedCoordinates);
+                        recorder.rememberLocation(id, owner, "FUEL_DETECTION", position.getLatitude(), position.getLongitude(), position.getTimestampMillis());
                         handler.postDelayed(() -> { if (version == generation) close(); }, 24 * 60 * 60 * 1000L);
                     } catch (Exception invalid) { evidence = null; }
                 }

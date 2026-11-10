@@ -3,6 +3,8 @@ package com.pleos.fuelog.home;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -15,8 +17,49 @@ public final class RecordingPayloads {
         if (km == null || !Float.isFinite(km) || km < 0) return sample.put("missingReason", "odometer_unavailable");
         if (!Double.isFinite(previousKm)) return sample.put("missingReason", "baseline_required");
         if (km < previousKm) return sample.put("missingReason", "odometer_reset");
-        return sample.put("distanceKm", km - previousKm);
+        if (km - previousKm > 1000) return sample.put("missingReason", "distance_jump");
+        return sample.put("distanceKm", decimalKm(km - previousKm));
     }
+    public static BigDecimal decimalKm(double value) {
+        return BigDecimal.valueOf(value).setScale(3, RoundingMode.HALF_UP);
+    }
+
+    /** Only repair bodies explicitly rejected before persistence; never rewrite an acknowledged batch. */
+    public static boolean repairRejected(JSONObject job, int status, String code) throws Exception {
+        JSONObject body = job.optJSONObject("body");
+        if (body == null) return false;
+        if (status == 400 && "INVALID_DISTANCE".equals(code) && "samples".equals(job.optString("kind"))) {
+            boolean changed = false;
+            JSONArray samples = body.getJSONArray("samples");
+            for (int i = 0; i < samples.length(); i++) {
+                JSONObject sample = samples.getJSONObject(i);
+                if (!sample.has("distanceKm")) continue;
+                double value = sample.getDouble("distanceKm");
+                if (!Double.isFinite(value) || value < 0 || value > 1000) {
+                    sample.remove("distanceKm"); sample.put("missingReason", "distance_jump"); changed = true;
+                } else if (new BigDecimal(sample.get("distanceKm").toString()).scale() > 3) {
+                    sample.put("distanceKm", decimalKm(value)); changed = true;
+                }
+            }
+            return changed;
+        }
+        if (status == 400 && "INVALID_REQUEST".equals(code) && "upload".equals(job.optString("kind"))) {
+            boolean changed = false;
+            for (String key : new String[]{"distanceKm", "unitPrice"}) {
+                if (!body.has(key) || body.isNull(key)) continue;
+                BigDecimal value = new BigDecimal(body.get(key).toString());
+                if (value.scale() > 3) { body.put(key, value.setScale(3, RoundingMode.HALF_UP)); changed = true; }
+            }
+            return changed;
+        }
+        if (status == 409 && "RECORDING_QUALITY_MISMATCH".equals(code)
+                && "upload".equals(job.optString("kind")) && !body.optBoolean("missing")) {
+            body.put("missing", true);
+            return true;
+        }
+        return false;
+    }
+
     public static int nextJob(JSONArray jobs, JSONObject intervals, long now) throws Exception {
         Set<String> waiting = new HashSet<>();
         for (int i = 0; i < jobs.length(); i++) {
@@ -75,7 +118,7 @@ public final class RecordingPayloads {
                 .put("source", "manual_app").put("userConsentId", data.optString("candidateId").isEmpty()
                         ? JSONObject.NULL : data.getString("candidateId"))
                 .put("startedAt", iso(data.getLong("startedAt"))).put("endedAt", iso(data.getLong("endedAt")))
-                .put("endEstimated", data.optBoolean("endEstimated")).put("distanceKm", data.optDouble("distanceKm"))
+                .put("endEstimated", data.optBoolean("endEstimated")).put("distanceKm", decimalKm(data.optDouble("distanceKm")))
                 .put("distanceValid", data.optBoolean("distanceValid")).put("missing", data.optBoolean("missing"))
                 .put("fuelEndpointsValid", data.optBoolean("fuelEndpointsValid"))
                 .put("refueled", data.optBoolean("refueled")).put("ownerChanged", data.optBoolean("ownerChanged"))
@@ -85,7 +128,7 @@ public final class RecordingPayloads {
         if (data.optLong("priceObservedAt") > 0) result.put("priceObservedAt", iso(data.getLong("priceObservedAt")));
         if (data.optBoolean("evDetected")) {
             if (data.optBoolean("chargePriceValid")) {
-                result.put("unitPrice", data.getDouble("chargeUnitPriceWonPerKwh"))
+                result.put("unitPrice", decimalKm(data.getDouble("chargeUnitPriceWonPerKwh")))
                         .put("priceValid", true).put("currency", "KRW")
                         .put("priceSource", data.getString("chargePriceSource"))
                         .put("priceObservedAt", iso(data.getLong("chargePriceObservedAt")));

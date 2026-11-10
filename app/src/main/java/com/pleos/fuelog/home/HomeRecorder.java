@@ -40,7 +40,8 @@ public final class HomeRecorder {
     private int fuelGeneration;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Vehicle vehicle;
-    private boolean visible, pending;
+    private boolean visible, pending, gearPending, endAtPark;
+    private int gearGeneration;
     private int generation;
     private Runnable changed = () -> {};
     private final Runnable tick = new Runnable() {
@@ -49,7 +50,7 @@ public final class HomeRecorder {
             if (sync != null) sync.pump();
             deviceStatus.refresh();
             reconcileUser();
-            if (trip.active && !pending && !verifiedOwner().isEmpty()) read();
+            readGear();
             readFuel();
             readEv();
             changed.run();
@@ -99,6 +100,8 @@ public final class HomeRecorder {
         trip.savedAt = store.getLong("savedAt", 0);
         startedAt = store.getLong("startedAt", 0);
         trip.sampleCount = store.getInt("sampleCount", 0);
+        trip.startKm = Double.longBitsToDouble(store.getLong("startKm", Double.doubleToLongBits(Double.NaN)));
+        trip.endKm = Double.longBitsToDouble(store.getLong("endKm", Double.doubleToLongBits(Double.NaN)));
         if (trip.active) {
             try {
                 JSONArray history = new JSONArray(store.getString("history", "[]"));
@@ -129,7 +132,7 @@ public final class HomeRecorder {
         tick.run();
     }
 
-    // 3. 기록 시작·종료: 사용자가 지정한 앱 기록 구간을 저장한다.
+    // 3. 기록 시작·종료: 기어로 구분한 운행 구간을 저장한다.
     public void toggle() {
         generation++;
         pending = false;
@@ -223,6 +226,28 @@ public final class HomeRecorder {
         } catch (RuntimeException e) { handler.removeCallbacks(timeout); finish(request, null); }
     }
 
+    private void readGear() {
+        if (evSource == null || gearPending || pending || verifiedOwner().isEmpty()) return;
+        gearPending = true;
+        int request = ++gearGeneration;
+        Runnable timeout = () -> {
+            if (request != gearGeneration) return;
+            gearGeneration++;
+            gearPending = false;
+            trip.interrupt();
+        };
+        handler.postDelayed(timeout, 10000);
+        evSource.readEvRecording((gear, wh, capacity) -> {
+            if (!visible || request != gearGeneration) return;
+            handler.removeCallbacks(timeout);
+            gearPending = false;
+            if (verifiedOwner().isEmpty()) return;
+            if (trip.shouldStart(gear)) toggle();
+            endAtPark = trip.shouldEnd(gear);
+            if (trip.active) read();
+        });
+    }
+
     private void finishUnavailable() { pending = true; finish(++generation, null); }
 
     private void finish(int request, Float km) {
@@ -237,6 +262,11 @@ public final class HomeRecorder {
             sync.sample(intervalId, sample, verifiedOwner().isEmpty() ? "" : candidateId);
             deviceStatus.odometer(km, now);
         } catch (Exception error) { trip.interrupt(); storageError = "샘플 업로드 큐 저장 실패"; }
+        if (endAtPark) {
+            endAtPark = false;
+            try { endForSwitch(); }
+            catch (Exception error) { trip.interrupt(); storageError = "운행 저장 실패 · P 상태에서 재시도합니다"; }
+        }
         save(); changed.run();
     }
 
@@ -284,8 +314,29 @@ public final class HomeRecorder {
     public void setLocationAssistConsent(boolean consent) throws IOException {
         if (consent && verifiedOwner().isEmpty()) throw new IOException("사용자 확인 필요");
         if (!store.edit().putBoolean("locationAssistConsent", consent)
-                .putString("locationAssistConsentOwner", consent ? verifiedOwner() : "").commit()) throw new IOException();
+                .putString("locationAssistConsentOwner", verifiedOwner()).commit()) throw new IOException();
         if (!consent) { stationEnrichment.close(); chargeEnrichment.close(); }
+    }
+
+    public boolean locationAssistDecisionMade() {
+        return !verifiedOwner().isEmpty()
+                && verifiedOwner().equals(store.getString("locationAssistConsentOwner", ""));
+    }
+
+    private final java.util.Map<String, JSONObject> visibleLocations = new java.util.HashMap<>();
+
+    public void rememberLocation(String id, String subject, String purpose, double latitude, double longitude, long measuredAt) throws Exception {
+        if (id.isEmpty() || !subject.equals(verifiedOwner()) || !Double.isFinite(latitude) || !Double.isFinite(longitude)
+                || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || measuredAt <= 0) throw new IllegalArgumentException("Invalid display location");
+        visibleLocations.put(id, new JSONObject().put("owner", subject).put("purpose", purpose)
+                .put("latitude", latitude).put("longitude", longitude).put("measuredAt", measuredAt));
+    }
+
+    public JSONObject visibleLocation(String id) {
+        if (verifiedOwner().isEmpty()) return null;
+        JSONObject value = visibleLocations.get(id);
+        if (value == null || !verifiedOwner().equals(value.optString("owner"))) return null;
+        try { return new JSONObject(value.toString()); } catch (Exception invalid) { return null; }
     }
 
     public void setEvSource(AaosVehicleDiagnosticService source) { evSource = source; }
@@ -408,6 +459,9 @@ public final class HomeRecorder {
             java.util.Iterator<String> keys = energy.keys();
             while (keys.hasNext()) { String key = keys.next(); merged.put(key, energy.get(key)); }
         }
+        JSONObject remote = sync == null ? null : sync.summary(snapshot.optString("intervalId"));
+        JSONObject quality = remote == null ? null : remote.optJSONObject("quality");
+        if (quality != null && quality.optBoolean("missing")) merged.put("missing", true);
         return merged;
     }
 
@@ -425,6 +479,19 @@ public final class HomeRecorder {
             }
         } catch (Exception ignored) { }
         return null;
+    }
+
+    public void applyTripPriceReference(String id, JSONObject response) throws Exception {
+        TripSummary current = summary();
+        if (current == null || !id.equals(current.data.getString("intervalId"))
+                || !id.equals(response.getString("tripId")) || !verifiedOwner().equals(response.getString("owner")))
+            throw new IllegalArgumentException("Trip reference scope mismatch");
+        java.time.Instant.parse(response.getString("fetchedAt"));
+        JSONObject energy = evIntervals.optJSONObject(id);
+        if (energy == null) throw new IllegalStateException("Battery recording unavailable");
+        energy.put("currentPriceReference", response);
+        evStore.write(evIntervals.toString());
+        changed.run();
     }
 
     public JSONObject serverSummary(String id) { return sync == null ? null : sync.summary(id); }
@@ -473,7 +540,9 @@ public final class HomeRecorder {
 
     // 8. 이탈·연결 해제: 수집을 중단하고 원래 사용자 기록을 보존한다.
     public void pause() {
+        visibleLocations.clear();
         visible = false;
+        gearGeneration++; gearPending = false; endAtPark = false;
         evSource = null;
         stationEnrichment.close();
         chargeEnrichment.close();
@@ -491,6 +560,7 @@ public final class HomeRecorder {
     }
 
     public void clearPersonalCache() {
+        visibleLocations.clear();
         stationEnrichment.close();
         chargeEnrichment.close();
         interruptEv();
@@ -529,6 +599,8 @@ public final class HomeRecorder {
     private JSONObject snapshot(boolean ended) throws Exception {
         return new JSONObject().put("intervalId", intervalId).put("owner", owner)
                 .put("candidateId", candidateId).put("startedAt", startedAt).put("endedAt", ended ? System.currentTimeMillis() : 0)
+                .put("startOdometerKm", Double.isFinite(trip.startKm) ? trip.startKm : JSONObject.NULL)
+                .put("endOdometerKm", ended && Double.isFinite(trip.endKm) ? trip.endKm : JSONObject.NULL)
                 .put("distanceKm", trip.distance).put("distanceValid", trip.sampleCount >= 2)
                 .put("sampledAt", trip.sampledAt).put("missing", trip.missing)
                 .put("synced", false).put("savedAt", trip.savedAt);
@@ -548,6 +620,8 @@ public final class HomeRecorder {
                 .putString("owner", owner).putString("ownerName", ownerName)
 
                 .putBoolean("active", trip.active).putBoolean("missing", trip.missing)
+                .putLong("startKm", Double.doubleToLongBits(trip.startKm))
+                .putLong("endKm", Double.doubleToLongBits(trip.endKm))
                 .putLong("distance", Double.doubleToLongBits(trip.distance))
                 .putLong("sampledAt", trip.sampledAt).putLong("savedAt", savedAt).commit();
         if (saved) trip.savedAt = savedAt;

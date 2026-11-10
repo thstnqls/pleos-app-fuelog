@@ -1,6 +1,8 @@
 package com.pleos.fuelog.home;
 
 import android.text.InputType;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -82,6 +84,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
                             Long.toString(revision), result -> completed())).show();
         });
         dialog = builder.create();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             if (!active() || call != null) return;
             try {
@@ -127,6 +130,8 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         TextView title = new TextView(activity); title.setText(label); parent.addView(title);
         EditText input = new EditText(activity); input.setContentDescription(label); input.setInputType(type);
         input.setSingleLine(true); input.setText(value); input.setTextSize(20);
+        input.setImeOptions(input.getImeOptions() | EditorInfo.IME_FLAG_NO_FULLSCREEN);
+        input.setHint(label);
         input.setMinHeight((int) (64 * activity.getResources().getDisplayMetrics().density));
         parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
     }

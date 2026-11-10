@@ -6,6 +6,26 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class RecordingPayloadsTest {
+    @Test public void floatDistanceIsRoundedAndRejectedLegacyJobsRecoverWithoutChangingIdentity() throws Exception {
+        JSONObject sample = RecordingPayloads.sample(1000.1f, 1000, 1000);
+        assertEquals("0.100", sample.get("distanceKm").toString());
+        assertEquals("distance_jump", RecordingPayloads.sample(2001f, 1000, 1000).getString("missingReason"));
+        JSONObject job = new JSONObject().put("kind", "samples").put("body", new JSONObject().put("batchId", "same-batch")
+                .put("samples", new JSONArray().put(new JSONObject().put("sequence", 2).put("distanceKm", 0.0999755859375))));
+        assertFalse(RecordingPayloads.repairRejected(job, 503, "INVALID_DISTANCE"));
+        assertTrue(RecordingPayloads.repairRejected(job, 400, "INVALID_DISTANCE"));
+        assertEquals("same-batch", job.getJSONObject("body").getString("batchId"));
+        assertEquals(2, job.getJSONObject("body").getJSONArray("samples").getJSONObject(0).getLong("sequence"));
+        assertFalse(RecordingPayloads.repairRejected(job, 400, "INVALID_DISTANCE"));
+        JSONObject upload = new JSONObject().put("kind", "upload").put("body", new JSONObject().put("missing", false));
+        assertTrue(RecordingPayloads.repairRejected(upload, 409, "RECORDING_QUALITY_MISMATCH"));
+        assertTrue(upload.getJSONObject("body").getBoolean("missing"));
+        assertFalse(RecordingPayloads.repairRejected(upload, 409, "RECORDING_QUALITY_MISMATCH"));
+        upload.getJSONObject("body").put("unitPrice", 325.433333).put("distanceKm", .0999755859375);
+        assertTrue(RecordingPayloads.repairRejected(upload, 400, "INVALID_REQUEST"));
+        assertEquals("325.433", upload.getJSONObject("body").get("unitPrice").toString());
+    }
+
     @Test public void startAcknowledgementMustKeepThePairedOwner() throws Exception {
         String id = java.util.UUID.randomUUID().toString();
         JSONObject job = new JSONObject().put("kind", "start").put("localId", "local")

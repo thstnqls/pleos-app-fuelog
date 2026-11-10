@@ -47,7 +47,24 @@ public class RecordingSavedTimeAndroidTest {
                     assertEquals(4, result.consumedKwh(), 0);
                     assertEquals(15, result.evEconomy(), 0);
                     assertEquals(1400, result.evCost(), 0);
+                    String id = result.data.getString("intervalId");
+                    recorder.rememberLocation(id, "metrics-owner", "CURRENT_REFERENCE", 37.5, 127.1, 1000);
+                    assertEquals(37.5, recorder.visibleLocation(id).getDouble("latitude"), 0);
+                    assertThrows(IllegalArgumentException.class, () -> recorder.rememberLocation(id, "other", "CURRENT_REFERENCE", 37.5, 127.1, 1000));
+                    assertThrows(IllegalArgumentException.class, () -> recorder.rememberLocation(id, "metrics-owner", "CURRENT_REFERENCE", Double.NaN, 127.1, 1000));
+                    var reference = new org.json.JSONObject().put("tripId", id).put("owner", "metrics-owner")
+                            .put("fetchedAt", java.time.Instant.now().toString()).put("scenarios", new org.json.JSONArray());
+                    recorder.applyTripPriceReference(id, reference);
+                    assertNotNull(recorder.summary().data.optJSONObject("currentPriceReference"));
+                    assertThrows(IllegalArgumentException.class, () -> recorder.applyTripPriceReference(id, new org.json.JSONObject(reference.toString()).put("owner", "other")));
+                    var syncField = HomeRecorder.class.getDeclaredField("sync"); syncField.setAccessible(true);
+                    var stateField = RecordingSync.class.getDeclaredField("state"); stateField.setAccessible(true);
+                    var state = (org.json.JSONObject) stateField.get(syncField.get(recorder));
+                    state.getJSONObject("intervals").getJSONObject(id).put("summary", new org.json.JSONObject()
+                            .put("quality", new org.json.JSONObject().put("missing", true)));
+                    assertTrue(Double.isNaN(recorder.summary().consumedKwh()));
                     recorder.pause();
+                    assertNull(recorder.visibleLocation(id));
                 } catch (Exception error) { throw new AssertionError(error); }
             });
         } finally {

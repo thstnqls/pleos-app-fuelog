@@ -203,6 +203,13 @@ public final class RecordingSync {
                 public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> {
                     String code = "";
                     try { code = new JSONObject(response.getBody()).optString("code"); } catch (Exception ignored) { }
+                    try {
+                        if (RecordingPayloads.repairRejected(job, response.getStatusCode(), code)) {
+                            busy = false; job.remove("retryAt"); save();
+                            message = "거부된 기록 형식 보정 · 다시 전송 중";
+                            changed.run(); pump(); return;
+                        }
+                    } catch (Exception error) { failJob("기록 형식 보정 저장 실패 · 원본 보관 중"); return; }
                     failJob("동기화 보류 · HTTP " + response.getStatusCode() + " " + code + " · 기록 보관 중");
                 }); }
                 public void onFailure(IOException error) { main.post(() -> failJob("서버 연결 실패 · 기록 보관 중")); }

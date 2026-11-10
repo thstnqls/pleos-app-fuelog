@@ -29,6 +29,17 @@ public class EvRecordingTest {
         assertFalse(ev.snapshot().has("chargePriceScenarios"));
     }
 
+    @Test public void currentReferenceCostUsesOnlyComparableRatesAndValidConsumption() throws Exception {
+        JSONObject data = new JSONObject().put("evEndpointsValid", true).put("consumedKwh", 4);
+        JSONObject scenario = new JSONObject().put("averageWonPerKwh", 350)
+                .put("stations", new org.json.JSONArray().put(new JSONObject()).put(new JSONObject()));
+        TripSummary summary = new TripSummary(data);
+        assertEquals(1400, summary.referenceCost(scenario), 0);
+        assertTrue(Double.isNaN(summary.referenceCost(new JSONObject().put("averageWonPerKwh", 350))));
+        data.put("evMissing", true);
+        assertTrue(Double.isNaN(summary.referenceCost(scenario)));
+    }
+
     @Test public void whPreferredAndPercentFallbackNeedsCapacity() {
         assertEquals(32, EvRecording.kwh(32000, 90, 60000), 0);
         assertEquals(30, EvRecording.kwh(Double.NaN, 50, 60000), 0);

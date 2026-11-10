@@ -44,6 +44,7 @@ final class ChargeEnrichment {
                                 .put("latitude", position.getLatitude()).put("longitude", position.getLongitude())
                                 .put("measuredAt", RecordingPayloads.iso(measured)).put("receivedAt", RecordingPayloads.iso(now))
                                 .put("source", "PLEOS_CURRENT_UPDATE");
+                        recorder.rememberLocation(id, owner, "CHARGE_DETECTION", position.getLatitude(), position.getLongitude(), measured);
                         handler.postDelayed(() -> { if (version == generation) close(); }, 120000);
                     } catch (Exception invalid) { evidence = null; }
                 }

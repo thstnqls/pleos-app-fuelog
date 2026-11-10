@@ -109,7 +109,10 @@ public final class ConnectionSession {
 
     private void issueInstallation(Runnable changed) {
         busy = true; message = "서버에서 설치 ID와 인증 정보 발급 중";
-        api.request("POST", "installations", "", null, null, new ApiClient.ResultCallback() {
+        JSONObject body = new JSONObject();
+        try { body.put("device_alias", android.os.Build.MODEL); }
+        catch (JSONException error) { connectionFailed("장치 별칭을 준비하지 못했습니다", changed); return; }
+        api.request("POST", "installations", body.toString(), null, null, new ApiClient.ResultCallback() {
             public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
                 busy = false;
                 try {
@@ -170,7 +173,8 @@ public final class ConnectionSession {
                     JSONObject value = new JSONObject(response.getBody());
                     if (path.equals("installations/me")) {
                         if (!installationId.equals(value.getString("installation_id"))) throw new IllegalArgumentException();
-                        restored = true; linked = value.getBoolean("paired");
+                        restored = true;
+                        linked = value.getBoolean("paired");
                         vehicleId = value.isNull("vehicle_id") ? "" : UUID.fromString(value.getString("vehicle_id")).toString();
                         vehicleName = value.optString("vehicle_name", "등록된 차량");
                         String previousSubject = authenticatedSubject;

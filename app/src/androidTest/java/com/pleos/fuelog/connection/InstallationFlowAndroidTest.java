@@ -108,7 +108,9 @@ public class InstallationFlowAndroidTest {
             assertEquals(installationId, session.installationId);
             RecordedRequest installation = server.takeRequest(5, TimeUnit.SECONDS);
             assertEquals("/installations", installation.getPath()); assertNull(installation.getHeader("Authorization"));
-            assertEquals(0, installation.getBodySize());
+            JSONObject installationBody = new JSONObject(installation.getBody().readUtf8());
+            assertEquals(android.os.Build.MODEL, installationBody.getString("device_alias"));
+            assertEquals(1, installationBody.length());
             assertEquals("/installations/me", server.takeRequest(5, TimeUnit.SECONDS).getPath());
             assertEquals("/pairing-requests/current", server.takeRequest(5, TimeUnit.SECONDS).getPath());
             RecordedRequest qr = server.takeRequest(5, TimeUnit.SECONDS);

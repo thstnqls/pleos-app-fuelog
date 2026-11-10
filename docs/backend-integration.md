@@ -17,7 +17,7 @@ Swagger에는 C01~C04와 기존 페어링/일부 모바일 API만 있다. C05~C0
 ## 주소·인증
 
 - `API_BASE_URL`은 서버 루트다. 예: debug `http://sheetnews.ddns.net:3001/`. `/api`를 추가하지 않는다. release에는 HTTPS 주소가 필요하다.
-- 신규 설치는 `POST /installations`(인증·본문 없음)로 `installation_id`와 `installation_secret`을 발급받는다. 이 값은 차량 ID가 아닌 설치 ID/인증 정보다. Keystore AES-GCM으로 암호화해 백업 제외 디렉터리에 원자적으로 저장한다. 발급받은 값이 있으면 재발급하지 않는다.
+- 신규 설치는 `POST /installations`(인증 없음, 본문 `{"device_alias":"기기 모델명"}`)로 `installation_id`와 `installation_secret`을 발급받는다. `device_alias`는 Android `Build.MODEL`로 자동 지정한다. 이 값은 차량 ID가 아닌 설치 ID/인증 정보다. Keystore AES-GCM으로 암호화해 백업 제외 디렉터리에 원자적으로 저장한다. 발급받은 값이 있으면 재발급하지 않는다.
 - 이전 버전에서 앱이 생성한 자격 증명만 있는 설치는 기존 연결·미전송 기록을 보존하기 위해 `/connection/requests` 흐름을 유지한다. 신규 설치의 `/installations` 흐름과 인증 헤더·QR 형식을 섞지 않는다.
 - 장치 요청의 `Authorization`에는 설치 비밀값만 넣는다. 개인 홈·개인 구간 시작·세션 해제에는 별도 `X-Trip-User-Session: Bearer <scopedToken>`을 사용한다.
 - 검증 이후 샘플·요약 조회·모바일 전달에는 `X-Trip-User-Candidate: <candidateId>`를 사용한다. 여기에 `Bearer`는 붙이지 않는다.

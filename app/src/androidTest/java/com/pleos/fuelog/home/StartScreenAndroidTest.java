@@ -130,6 +130,8 @@ public class StartScreenAndroidTest {
                                 .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "Shared oil")
                                         .put("intervalMonths", 12).put("nextDueDate", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(30).toString())));
                         set(activity, "maintenanceSummary", new MaintenanceSummary(common));
+                        set(activity, "maintenanceVehicleId", connection.vehicleId);
+                        assertEquals(owner, HomeRecorder.get(isolated).verifiedOwner());
                         var render = CarHomeActivity.class.getDeclaredMethod("render"); render.setAccessible(true); render.invoke(activity);
                         View root = activity.findViewById(android.R.id.content);
                         assertTrue(contains(root, "교체 D-30 · 30일 남음"));
@@ -158,6 +160,16 @@ public class StartScreenAndroidTest {
                         menu.getListView().performItemClick(menu.getListView().getChildAt(0), 0, 0);
                         form[0] = (androidx.appcompat.app.AlertDialog) get(editor, "dialog");
                         View fields = form[0].findViewById(android.R.id.content);
+                        for (String label : new String[]{"정비 항목", "교체주기 km · 선택", "교체주기 개월 · 선택",
+                                "마지막 교체일 · YYYY-MM-DD · 선택", "마지막 교체 당시 누적거리 km · 선택"}) {
+                            android.view.inputmethod.EditorInfo info = new android.view.inputmethod.EditorInfo();
+                            assertNotNull(findInput(fields, label).onCreateInputConnection(info));
+                            assertTrue((info.imeOptions & android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN) != 0);
+                            assertEquals(label, info.hintText.toString());
+                        }
+                        assertEquals(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+                                form[0].getWindow().getAttributes().softInputMode
+                                        & android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST);
                         findInput(fields, "정비 항목").setText("타이어");
                         findInput(fields, "교체주기 개월 · 선택").setText("12");
                         findInput(fields, "마지막 교체일 · YYYY-MM-DD · 선택").setText("2026-01-01");
@@ -177,7 +189,34 @@ public class StartScreenAndroidTest {
                 assertEquals(12, submitted.getJSONObject("plan").getInt("intervalMonths"));
                 assertEquals("2026-01-01", submitted.getString("lastServiceDate"));
                 assertEquals("/maintenance/summary", server.takeRequest(5, TimeUnit.SECONDS).getPath());
-                scenario.onActivity(activity -> assertFalse(form[0].isShowing()));
+                scenario.onActivity(activity -> {
+                    assertFalse(form[0].isShowing());
+                    try {
+                        HomeRecorder.get(isolated).rememberLocation("display-location", owner, "CURRENT_REFERENCE", 37.5, 127.1, System.currentTimeMillis());
+                        var renderLocation = CarHomeActivity.class.getDeclaredMethod("renderLocation", String.class);
+                        renderLocation.setAccessible(true); renderLocation.invoke(activity, "display-location");
+                        var address = CarHomeActivity.class.getDeclaredMethod("renderStationAddress", org.json.JSONObject.class);
+                        address.setAccessible(true); address.invoke(activity, new org.json.JSONObject().put("address", "서울 테스트로 1"));
+                        View root = activity.findViewById(android.R.id.content);
+                        assertTrue("latitude", contains(root, "37.500000")); assertTrue("longitude", contains(root, "127.100000")); assertTrue("address", contains(root, "주소 · 서울 테스트로 1"));
+                        set(activity, "page", 5);
+                        var refresh = CarHomeActivity.class.getDeclaredMethod("render"); refresh.setAccessible(true);
+                        refresh.invoke(activity);
+                        assertEquals(View.VISIBLE, ((View) get(activity, "headerNavigation")).getVisibility());
+                        isolated.getSharedPreferences("connection_settings", Context.MODE_PRIVATE).edit().putString("pending", "USER").commit();
+                        refresh.invoke(activity);
+                        assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
+                        assertEquals(View.GONE, ((View) get(activity, "navigation")).getVisibility());
+                        isolated.getSharedPreferences("connection_settings", Context.MODE_PRIVATE).edit().remove("pending").commit();
+                        connection.registrationReset();
+                        var settingsChanged = CarHomeActivity.class.getDeclaredMethod("settingsChanged"); settingsChanged.setAccessible(true); settingsChanged.invoke(activity);
+                        assertEquals(6, get(activity, "page"));
+                        assertEquals(0, ((TabLayout) activity.findViewById(android.R.id.content).findViewWithTag("start.tabs")).getSelectedTabPosition());
+                        assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
+                        set(activity, "allowed", false); refresh.invoke(activity);
+                        assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
+                    } catch (Exception failure) { throw new AssertionError(failure); }
+                });
             }
             assertEquals("Leaving the activity must unregister the stream", 1, source.unregistrations);
         } finally {
