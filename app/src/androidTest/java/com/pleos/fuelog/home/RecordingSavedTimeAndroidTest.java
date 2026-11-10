@@ -39,7 +39,7 @@ public class RecordingSavedTimeAndroidTest {
                     var data = EvRecording.class.getDeclaredField("data"); data.setAccessible(true);
                     ((org.json.JSONObject) data.get(ev)).put("chargePriceValid", true)
                             .put("chargeUnitPriceWonPerKwh", 350).put("chargePriceSource", "confirmed-charge:test");
-                    ev.sample("D", 40, "AAOS_WH", 1000); ev.sample("P", 36, "AAOS_WH", 2000);
+                    ev.sample(false, 40, "AAOS_WH", 1000); ev.sample(false, 36, "AAOS_WH", 2000);
                     var save = HomeRecorder.class.getDeclaredMethod("saveEv"); save.setAccessible(true); save.invoke(recorder);
                     TripSummary result = recorder.summary();
                     assertNotNull(result);
@@ -72,6 +72,61 @@ public class RecordingSavedTimeAndroidTest {
             target.deleteSharedPreferences(prefix + "home_recording");
             File[] files = directory.listFiles();
             if (files != null) for (File entry : files) Files.deleteIfExists(entry.toPath());
+            Files.deleteIfExists(directory.toPath());
+        }
+    }
+
+    @Test public void switchOnWhileParkedCreatesOneChargeIntervalAndOffClosesIt() throws Exception {
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String prefix = "switch-charge-" + UUID.randomUUID();
+        File directory = new File(target.getCacheDir(), prefix); assertTrue(directory.mkdirs());
+        Context isolated = new ContextWrapper(target) {
+            @Override public File getNoBackupFilesDir() { return directory; }
+            @Override public SharedPreferences getSharedPreferences(String name, int mode) { return target.getSharedPreferences(prefix + name, mode); }
+        };
+        var connection = com.pleos.fuelog.connection.ConnectionSession.get(isolated);
+        String priorUser = connection.authenticatedSubject;
+        boolean priorLinked = connection.linked;
+        isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).edit().putString("owner", "charge-owner").commit();
+        try {
+            connection.authenticatedSubject = "charge-owner"; connection.linked = false;
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                try {
+                    HomeRecorder recorder = new HomeRecorder(isolated);
+                    var visible = HomeRecorder.class.getDeclaredField("visible"); visible.setAccessible(true); visible.set(recorder, true);
+                    var generation = HomeRecorder.class.getDeclaredField("evGeneration"); generation.setAccessible(true); generation.set(recorder, 1);
+                    var accept = HomeRecorder.class.getDeclaredMethod("acceptEv", int.class, String.class, String.class, Boolean.class, double.class, String.class, Runnable.class);
+                    accept.setAccessible(true);
+                    String interval = recorder.intervalId;
+                    accept.invoke(recorder, 1, "charge-owner", interval, false, 30d, "AAOS_WH", (Runnable) () -> {});
+                    assertFalse(recorder.trip.active);
+                    accept.invoke(recorder, 1, "charge-owner", interval, true, 30d, "AAOS_WH", (Runnable) () -> {});
+                    assertTrue(recorder.chargingInterval());
+                    accept.invoke(recorder, 1, "charge-owner", interval, true, 32d, "AAOS_WH", (Runnable) () -> {});
+                    accept.invoke(recorder, 1, "charge-owner", interval, false, 33d, "AAOS_WH", (Runnable) () -> {});
+                    assertFalse(recorder.trip.active);
+                    TripSummary summary = recorder.summary(); assertNotNull(summary);
+                    assertTrue(summary.data.getBoolean("chargingOnly"));
+                    assertFalse(summary.data.getBoolean("distanceValid"));
+                    var charges = summary.data.getJSONArray("chargeCandidates");
+                    assertEquals(1, charges.length());
+                    assertEquals(3, charges.getJSONObject(0).getDouble("estimatedKwh"), 0);
+                    assertEquals(interval, summary.data.getString("intervalId"));
+                    assertEquals(1, new org.json.JSONArray(isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).getString("history", "[]")).length());
+                    recorder.toggle();
+                    String next = recorder.intervalId;
+                    int nextRequest = generation.getInt(recorder);
+                    var finishAfterEv = HomeRecorder.class.getDeclaredField("finishAfterEv"); finishAfterEv.setAccessible(true); finishAfterEv.set(recorder, true);
+                    accept.invoke(recorder, nextRequest, "charge-owner", next, true, 33d, "AAOS_WH", (Runnable) () -> {});
+                    assertFalse("A driving interval must still close at P even if the switch is ON", recorder.trip.active);
+                    assertFalse(recorder.summary().data.getBoolean("chargingOnly"));
+                    recorder.pause();
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+        } finally {
+            connection.authenticatedSubject = priorUser; connection.linked = priorLinked;
+            target.deleteSharedPreferences(prefix + "home_recording");
+            File[] files = directory.listFiles(); if (files != null) for (File file : files) Files.deleteIfExists(file.toPath());
             Files.deleteIfExists(directory.toPath());
         }
     }

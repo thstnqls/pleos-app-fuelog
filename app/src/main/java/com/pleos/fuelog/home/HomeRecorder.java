@@ -34,7 +34,8 @@ public final class HomeRecorder {
     private EncryptedJsonStore evStore;
     private JSONObject evIntervals;
     private AaosVehicleDiagnosticService evSource;
-    private boolean evPending;
+    private boolean evPending, chargingOnly, finishAfterEv;
+    private Boolean chargeSwitchOn;
     private int evGeneration;
     private boolean fuelPending;
     private int fuelGeneration;
@@ -51,6 +52,7 @@ public final class HomeRecorder {
             deviceStatus.refresh();
             reconcileUser();
             readGear();
+            if (chargingOnly && trip.active && !pending) read();
             readFuel();
             readEv();
             changed.run();
@@ -94,6 +96,7 @@ public final class HomeRecorder {
             if (savedEv != null) ev.restore(savedEv);
         } catch (Exception error) { evIntervals = null; storageError = "배터리 기록 복원 실패 · 수집 보류"; }
         trip.active = store.getBoolean("active", false);
+        chargingOnly = trip.active && store.getBoolean("chargingOnly", false);
         trip.missing = store.getBoolean("missing", false) || trip.active;
         trip.distance = Double.longBitsToDouble(store.getLong("distance", 0));
         trip.sampledAt = store.getLong("sampledAt", 0);
@@ -117,7 +120,7 @@ public final class HomeRecorder {
                 if (!store.edit().putString("history", history.toString()).putBoolean("active", false)
                         .putString("intervalId", next).putLong("distance", 0).putLong("sampledAt", 0).putInt("sampleCount", 0).commit())
                     throw new IOException();
-                trip.stop(); intervalId = next; candidateId = ""; trip.distance = 0; trip.sampledAt = 0; trip.sampleCount = 0;
+                trip.stop(); chargingOnly = false; intervalId = next; candidateId = ""; trip.distance = 0; trip.sampledAt = 0; trip.sampleCount = 0;
             } catch (Exception e) { storageError = "복구 기록 저장 실패"; }
         }
         save(false);
@@ -148,6 +151,7 @@ public final class HomeRecorder {
                 sync.start(intervalId, startedAt, owner);
                 candidateId = "";
                 ev.reset();
+                chargingOnly = false; finishAfterEv = false;
                 ev.setPriceReference(evIntervals, owner, startedAt);
                 trip.start();
             } catch (Exception e) { storageError = verifiedOwner().isEmpty() ? "페어링 사용자 확인 후 기록을 시작해 주세요" : "업로드 큐 저장 실패 · 기록 시작 보류"; }
@@ -177,6 +181,7 @@ public final class HomeRecorder {
         generation++;
         pending = false;
         trip.stop();
+        chargingOnly = false; finishAfterEv = false;
         ev.interrupt(); evGeneration++; evPending = false;
         intervalId = nextId;
         candidateId = "";
@@ -227,7 +232,7 @@ public final class HomeRecorder {
     }
 
     private void readGear() {
-        if (evSource == null || gearPending || pending || verifiedOwner().isEmpty()) return;
+        if (evSource == null || chargingOnly || gearPending || pending || verifiedOwner().isEmpty()) return;
         gearPending = true;
         int request = ++gearGeneration;
         Runnable timeout = () -> {
@@ -264,8 +269,8 @@ public final class HomeRecorder {
         } catch (Exception error) { trip.interrupt(); storageError = "샘플 업로드 큐 저장 실패"; }
         if (endAtPark) {
             endAtPark = false;
-            try { endForSwitch(); }
-            catch (Exception error) { trip.interrupt(); storageError = "운행 저장 실패 · P 상태에서 재시도합니다"; }
+            finishAfterEv = true;
+            readEv();
         }
         save(); changed.run();
     }
@@ -341,64 +346,107 @@ public final class HomeRecorder {
 
     public void setEvSource(AaosVehicleDiagnosticService source) { evSource = source; }
 
+    public boolean chargingInterval() { return trip.active && chargingOnly; }
+    public String chargeSwitchStatus() {
+        return chargeSwitchOn == null ? "충전 스위치 상태 수신 대기" : chargeSwitchOn ? "충전 스위치 ON" : "충전 스위치 OFF";
+    }
+
     private void interruptEv() {
-        evGeneration++; evPending = false; ev.interrupt();
+        evGeneration++; evPending = false; chargeSwitchOn = null; ev.interrupt();
+    }
+
+    private void finishBatteryInterval() {
+        if (!trip.active) { finishAfterEv = false; return; }
+        if (!finishAfterEv && !(chargingOnly && Boolean.FALSE.equals(chargeSwitchOn))) return;
+        finishAfterEv = false;
+        try { endForSwitch(); }
+        catch (Exception error) { storageError = "배터리 관측 구간 저장 실패 · 기록 보존 중"; }
     }
 
     private void readEv() {
-        if (!trip.active || evSource == null || evPending || evIntervals == null || verifiedOwner().isEmpty()) return;
+        if (evPending || verifiedOwner().isEmpty()) return;
+        if (evSource == null || vehicle == null || evIntervals == null) { finishBatteryInterval(); return; }
         evPending = true;
         int request = ++evGeneration;
         String subject = verifiedOwner(), interval = intervalId;
-        Runnable timeout = () -> { if (request == evGeneration) interruptEv(); };
-        handler.postDelayed(timeout, 10000);
-        evSource.readEvRecording((gear, wh, capacity) -> {
-            if (!visible || request != evGeneration) return;
-            if (!Double.isFinite(wh) && vehicle != null && !gear.isEmpty()) {
-                try {
-                    vehicle.getEvBattery().checkEvBatteryStateOfChargeCapabilities(config -> {
-                        handler.post(() -> {
-                            if (!visible || request != evGeneration) return;
-                            if (config == null || (config.getAccessType() != ai.pleos.playground.vehicle.api.model.capability.AccessType.READ
-                                    && config.getAccessType() != ai.pleos.playground.vehicle.api.model.capability.AccessType.READ_WRITE)) { timeout.run(); return; }
+        Runnable failed = () -> {
+            if (request != evGeneration) return;
+            interruptEv();
+            try { if (trip.active) saveEv(); } catch (Exception error) { storageError = "배터리 누락 상태 저장 실패"; }
+            finishBatteryInterval(); changed.run();
+        };
+        handler.postDelayed(failed, 10000);
+        try {
+            vehicle.getEvBattery().getEvChargeSwitchState(before -> {
+                handler.post(() -> {
+                    if (!visible || request != evGeneration) return;
+                    if (before == null || !subject.equals(verifiedOwner()) || !interval.equals(intervalId)) { failed.run(); return; }
+                    if (!before && !trip.active) {
+                        handler.removeCallbacks(failed); evPending = false; chargeSwitchOn = false; changed.run(); return;
+                    }
+                    evSource.readEvEnergy((wh, capacity) -> {
+                        if (!visible || request != evGeneration) return;
+                        if (Double.isFinite(wh)) verifyChargeSwitch(request, subject, interval, before,
+                                EvRecording.kwh(wh, Double.NaN, capacity), "AAOS_WH", failed);
+                        else {
                             try {
                                 vehicle.getEvBattery().getEvBatteryStateOfCharge(percent -> {
-                                    handler.post(() -> {
-                                        if (!visible || request != evGeneration || evSource == null) return;
-                                        evSource.readEvRecording((currentGear, ignoredWh, ignoredCapacity) -> {
-                                            if (!gear.equals(currentGear)) { timeout.run(); return; }
-                                            acceptEv(request, subject, interval, gear,
-                                                    EvRecording.kwh(Double.NaN, percent == null ? Double.NaN : percent, capacity),
-                                                    "SOC_PERCENT:" + capacity, timeout);
-                                        });
-                                    });
+                                    handler.post(() -> verifyChargeSwitch(request, subject, interval, before,
+                                            EvRecording.kwh(Double.NaN, percent == null ? Double.NaN : percent, capacity),
+                                            "SOC_PERCENT:" + capacity, failed));
                                     return Unit.INSTANCE;
-                                }, error -> { handler.post(timeout); return Unit.INSTANCE; });
-                            } catch (RuntimeException error) { timeout.run(); }
-                        }); return Unit.INSTANCE;
-                    }, error -> { handler.post(timeout); return Unit.INSTANCE; });
-                } catch (RuntimeException error) { timeout.run(); }
-            } else acceptEv(request, subject, interval, gear, EvRecording.kwh(wh, Double.NaN, capacity), "AAOS_WH", timeout);
-        });
+                                }, error -> { handler.post(failed); return Unit.INSTANCE; });
+                            } catch (RuntimeException error) { failed.run(); }
+                        }
+                    });
+                });
+                return Unit.INSTANCE;
+            }, error -> { handler.post(failed); return Unit.INSTANCE; });
+        } catch (RuntimeException error) { failed.run(); }
     }
 
-    private void acceptEv(int request, String subject, String interval, String gear, double kwh,
+    private void verifyChargeSwitch(int request, String subject, String interval, Boolean before,
+                                    double kwh, String basis, Runnable failed) {
+        if (!visible || request != evGeneration) return;
+        try {
+            vehicle.getEvBattery().getEvChargeSwitchState(after -> {
+                handler.post(() -> {
+                    if (!visible || request != evGeneration) return;
+                    if (after == null || !before.equals(after)) { failed.run(); return; }
+                    acceptEv(request, subject, interval, after, kwh, basis, failed);
+                });
+                return Unit.INSTANCE;
+            }, error -> { handler.post(failed); return Unit.INSTANCE; });
+        } catch (RuntimeException error) { failed.run(); }
+    }
+
+    private void acceptEv(int request, String subject, String interval, Boolean on, double kwh,
                           String basis, Runnable timeout) {
         if (!visible || request != evGeneration) return;
         handler.removeCallbacks(timeout); evPending = false;
-        if (!trip.active || !subject.equals(verifiedOwner()) || !interval.equals(intervalId)) { interruptEv(); return; }
+        if (!subject.equals(verifiedOwner()) || !interval.equals(intervalId)) { interruptEv(); return; }
+        if (on == null || !Double.isFinite(kwh) || kwh < 0) { interruptEv(); finishBatteryInterval(); return; }
+        chargeSwitchOn = on;
+        if (!trip.active && on) {
+            toggle();
+            if (!trip.active) return;
+            chargingOnly = true;
+            save();
+            if (!pending) read();
+        }
+        if (!trip.active) return;
         try {
             JSONObject prior = latestCharge(ev.snapshot());
-            if (gear.isEmpty()) ev.interrupt();
-            else ev.sample(gear, kwh, basis, System.currentTimeMillis());
+            ev.sample(on, kwh, basis, System.currentTimeMillis());
             JSONObject latest = latestCharge(ev.snapshot());
             if (latest != null) {
                 chargeEnrichment.observe(latest, prior == null || !prior.optString("id").equals(latest.optString("id")));
             }
             saveEv();
             queueCharges(ev.snapshot());
+            finishBatteryInterval();
             changed.run();
-        } catch (Exception error) { storageError = "배터리 기록 저장 실패"; interruptEv(); }
+        } catch (Exception error) { storageError = "배터리 기록 저장 실패"; interruptEv(); finishBatteryInterval(); }
     }
 
     private static JSONObject latestCharge(JSONObject data) {
@@ -542,7 +590,7 @@ public final class HomeRecorder {
     public void pause() {
         visibleLocations.clear();
         visible = false;
-        gearGeneration++; gearPending = false; endAtPark = false;
+        gearGeneration++; gearPending = false; endAtPark = false; finishAfterEv = false;
         evSource = null;
         stationEnrichment.close();
         chargeEnrichment.close();
@@ -601,7 +649,7 @@ public final class HomeRecorder {
                 .put("candidateId", candidateId).put("startedAt", startedAt).put("endedAt", ended ? System.currentTimeMillis() : 0)
                 .put("startOdometerKm", Double.isFinite(trip.startKm) ? trip.startKm : JSONObject.NULL)
                 .put("endOdometerKm", ended && Double.isFinite(trip.endKm) ? trip.endKm : JSONObject.NULL)
-                .put("distanceKm", trip.distance).put("distanceValid", trip.sampleCount >= 2)
+                .put("chargingOnly", chargingOnly).put("distanceKm", trip.distance).put("distanceValid", !chargingOnly && trip.sampleCount >= 2)
                 .put("sampledAt", trip.sampledAt).put("missing", trip.missing)
                 .put("synced", false).put("savedAt", trip.savedAt);
     }
@@ -619,7 +667,7 @@ public final class HomeRecorder {
                 .putInt("sampleCount", trip.sampleCount).putString("intervalId", intervalId)
                 .putString("owner", owner).putString("ownerName", ownerName)
 
-                .putBoolean("active", trip.active).putBoolean("missing", trip.missing)
+                .putBoolean("active", trip.active).putBoolean("chargingOnly", chargingOnly).putBoolean("missing", trip.missing)
                 .putLong("startKm", Double.doubleToLongBits(trip.startKm))
                 .putLong("endKm", Double.doubleToLongBits(trip.endKm))
                 .putLong("distance", Double.doubleToLongBits(trip.distance))

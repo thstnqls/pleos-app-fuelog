@@ -1,0 +1,429 @@
+{
+  "pleos": {
+    "getCumulativeEvEfficiency": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600b15",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getCurrentEvEfficiency": {
+      "error": "a: ERROR_NOT_SUPPORTED_PROPERTY",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getEvBatteryStateOfCharge": {
+      "value": 90,
+      "capability": "CapabilityConfig(accessType=READ)"
+    },
+    "getInstantaneousEvEfficiency": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600b13",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getSinceChargeEvEfficiency": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600b14",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getEvChargeCurrentDrawLimit": {
+      "capability": "CapabilityConfig(accessType=READ_WRITE)",
+      "value": 12.5
+    },
+    "getEvChargeSwitchState": {
+      "value": false,
+      "capability": "CapabilityConfig(accessType=READ_WRITE)"
+    },
+    "getCumulativeFuelEconomy": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600be2",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getFuelPercent": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21400be5",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getCurrentFuelEconomy": {
+      "error": "a: ERROR_NOT_SUPPORTED_PROPERTY",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    },
+    "getInstantaneousFuelEconomy": {
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY",
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600be0"
+    },
+    "getSinceChargeFuelEconomy": {
+      "error": "Exception: java.lang.IllegalArgumentException: property ID is not in carPropertyConfig list, and so it is not supported: 0x21600be1",
+      "capabilityError": "a: ERROR_NOT_SUPPORTED_PROPERTY"
+    }
+  },
+  "aaosBefore": {
+    "EV_CHARGE_STATE": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169117875,
+      "value": 2
+    },
+    "EV_CHARGE_SWITCH": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861482377,
+      "value": false
+    },
+    "EV_CHARGE_PORT_CONNECTED": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169015583,
+      "value": false
+    },
+    "EV_CHARGE_PORT_OPEN": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888863900460,
+      "value": false
+    },
+    "EV_CHARGE_CURRENT_DRAW_LIMIT": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861295168,
+      "value": 12.5
+    },
+    "EV_CHARGE_PERCENT_LIMIT": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861480377,
+      "value": 50
+    },
+    "EV_CHARGE_TIME_REMAINING": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000576628,
+      "value": 0
+    },
+    "EV_BATTERY_INSTANTANEOUS_CHARGE_RATE": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000583503,
+      "value": 0
+    },
+    "EV_BATTERY_LEVEL": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000552003,
+      "value": 70900
+    },
+    "EV_CURRENT_BATTERY_CAPACITY": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861275210,
+      "value": 77400
+    },
+    "INFO_EV_BATTERY_CAPACITY": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861268668,
+      "value": 77400
+    },
+    "INSTANTANEOUS_EV_EFFICIENCY": {
+      "definition": "ABSENT_ON_PLATFORM",
+      "config": "NOT_EXPOSED",
+      "error": "IllegalArgumentException: The property: 0x11600212 is unsupported"
+    },
+    "FUEL_LEVEL": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169013875,
+      "value": 15000
+    },
+    "INFO_FUEL_CAPACITY": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169008208,
+      "value": 15000
+    },
+    "INSTANTANEOUS_FUEL_ECONOMY": {
+      "definition": "ABSENT_ON_PLATFORM",
+      "config": "NOT_EXPOSED",
+      "error": "IllegalArgumentException: The property: 0x11600211 is unsupported"
+    },
+    "INFO_FUEL_TYPE": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169007291,
+      "value": [
+        10
+      ]
+    },
+    "GEAR_SELECTION": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888862405335,
+      "value": 4
+    },
+    "PERF_ODOMETER": {
+      "config": "NOT_EXPOSED",
+      "error": "SecurityException: requires android.car.permission.CAR_MILEAGE"
+    }
+  },
+  "aaosAfter": {
+    "EV_CHARGE_STATE": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169117875,
+      "value": 2
+    },
+    "EV_CHARGE_SWITCH": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861482377,
+      "value": false
+    },
+    "EV_CHARGE_PORT_CONNECTED": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169015583,
+      "value": false
+    },
+    "EV_CHARGE_PORT_OPEN": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888863900460,
+      "value": false
+    },
+    "EV_CHARGE_CURRENT_DRAW_LIMIT": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861295168,
+      "value": 12.5
+    },
+    "EV_CHARGE_PERCENT_LIMIT": {
+      "access": 3,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861480377,
+      "value": 50
+    },
+    "EV_CHARGE_TIME_REMAINING": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000576628,
+      "value": 0
+    },
+    "EV_BATTERY_INSTANTANEOUS_CHARGE_RATE": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000583503,
+      "value": 0
+    },
+    "EV_BATTERY_LEVEL": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2892000552003,
+      "value": 70900
+    },
+    "EV_CURRENT_BATTERY_CAPACITY": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861275210,
+      "value": 77400
+    },
+    "INFO_EV_BATTERY_CAPACITY": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888861268668,
+      "value": 77400
+    },
+    "INSTANTANEOUS_EV_EFFICIENCY": {
+      "definition": "ABSENT_ON_PLATFORM",
+      "config": "NOT_EXPOSED",
+      "error": "IllegalArgumentException: The property: 0x11600212 is unsupported"
+    },
+    "FUEL_LEVEL": {
+      "access": 1,
+      "changeMode": 2,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169013875,
+      "value": 15000
+    },
+    "INFO_FUEL_CAPACITY": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169008208,
+      "value": 15000
+    },
+    "INSTANTANEOUS_FUEL_ECONOMY": {
+      "definition": "ABSENT_ON_PLATFORM",
+      "config": "NOT_EXPOSED",
+      "error": "IllegalArgumentException: The property: 0x11600211 is unsupported"
+    },
+    "INFO_FUEL_TYPE": {
+      "access": 1,
+      "changeMode": 0,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 1169007291,
+      "value": [
+        10
+      ]
+    },
+    "GEAR_SELECTION": {
+      "access": 1,
+      "changeMode": 1,
+      "areas": [
+        0
+      ],
+      "status": 0,
+      "timestampNanos": 2888862405335,
+      "value": 4
+    },
+    "PERF_ODOMETER": {
+      "config": "NOT_EXPOSED",
+      "error": "SecurityException: requires android.car.permission.CAR_MILEAGE"
+    }
+  },
+  "permissionsBefore": {
+    "android.car.permission.CAR_ENERGY": {
+      "granted": true,
+      "protection": 1
+    },
+    "android.car.permission.CAR_ENERGY_PORTS": {
+      "granted": true,
+      "protection": 0
+    },
+    "pleos.car.permission.CAR_ENERGY": {
+      "granted": true,
+      "protection": 0
+    },
+    "pleos.car.permission.CONTROL_CAR_ENERGY": {
+      "granted": false,
+      "protection": 0
+    }
+  },
+  "meta": {
+    "section": "meta",
+    "measuredAt": "2026-11-10T11:29:44.970788Z",
+    "userId": 10,
+    "sdkReady": true,
+    "energyPermissionAfter": true
+  },
+  "subscription": {
+    "EV_CHARGE_STATE": {
+      "registered": true,
+      "status": 0,
+      "value": 2,
+      "timestampNanos": 1169117875,
+      "callbackReceived": true
+    }
+  },
+  "environment": {
+    "avd": "Pleos_Connect_v2.1.0",
+    "androidApi": 34,
+    "vehicleSdk": "2.3.2",
+    "vehicleService": "versionCode 74 (versionName not emitted by current dumpsys)",
+    "note": "Read-only emulator snapshots. No charging controls or VHAL writes."
+  }
+}

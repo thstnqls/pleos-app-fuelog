@@ -7,9 +7,9 @@ import java.util.UUID;
 /** Battery increases are provisional ledger entries, never proof of a paid charge. */
 public final class EvRecording {
     private JSONObject data = new JSONObject();
-    private double start = Double.NaN, parked = Double.NaN;
+    private double lastEnergy = Double.NaN, chargeStart = Double.NaN;
     private String basis = "", openId = "";
-    private boolean driving;
+    private Boolean switchState;
     private long startedAt;
 
     public static double kwh(double wh, double percent, double capacityWh) {
@@ -20,49 +20,59 @@ public final class EvRecording {
 
     public void reset() { interrupt(); data = new JSONObject(); }
     public void interrupt() {
-        if (Double.isFinite(start)) {
-            try { data.put("evMissing", true); } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
-        }
-        start = parked = Double.NaN; driving = false; basis = ""; openId = "";
+        try {
+            if (Double.isFinite(lastEnergy)) data.put("evMissing", true);
+            data.put("chargeSwitchKnown", false).remove("chargeSwitchOn");
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        lastEnergy = chargeStart = Double.NaN; switchState = null; basis = ""; openId = "";
     }
 
-    public void sample(String gear, double energy, String sampleBasis, long now) throws Exception {
-        if (!Double.isFinite(energy) || energy < 0 || now <= 0) { interrupt(); return; }
+    public void sample(Boolean chargeSwitchOn, double energy, String sampleBasis, long now) throws Exception {
+        if (chargeSwitchOn == null || !Double.isFinite(energy) || energy < 0 || now <= 0) { interrupt(); return; }
         if (!basis.isEmpty() && !basis.equals(sampleBasis)) interrupt();
         basis = sampleBasis;
-        data.put("batterySampledAt", now);
-        if (gear.equals("D") || gear.equals("R")) {
-            if (!driving) {
-                start = energy; startedAt = now; driving = true; parked = Double.NaN; openId = "";
-                data.put("evDetected", true);
-            }
-        } else if (gear.equals("P") && Double.isFinite(start)) {
-            if (driving) {
-                data.put("evEndpointsValid", true);
-                double consumed = start - energy;
-                if (consumed > 0) data.put("consumedKwh", data.optDouble("consumedKwh", 0) + consumed);
-                driving = false;
-                parked = Math.min(start, energy);
-            }
-            if (energy > parked) {
-                JSONArray entries = data.optJSONArray("chargeCandidates");
-                if (entries == null) { entries = new JSONArray(); data.put("chargeCandidates", entries); }
-                JSONObject entry = null;
-                for (int i = 0; i < entries.length(); i++)
-                    if (openId.equals(entries.getJSONObject(i).getString("id"))) entry = entries.getJSONObject(i);
-                if (entry == null) {
-                    openId = UUID.randomUUID().toString();
-                    entry = new JSONObject().put("id", openId).put("status", "CANDIDATE")
-                            .put("startAt", startedAt).put("detectedAt", now).put("basis", basis);
-                    entries.put(entry);
-                }
-                if (!entry.optString("status").equals("CANDIDATE")) return;
-                if (now - entry.optLong("detectedAt", now) >= 6000) entry.put("stable", true);
-                if (energy - parked > entry.optDouble("estimatedKwh", 0))
-                    entry.put("endAt", now).put("estimatedKwh", energy - parked);
-                data.put("chargedDuringInterval", true);
-            }
+        data.put("batterySampledAt", now).put("evDetected", true)
+                .put("chargeSwitchKnown", true).put("chargeSwitchOn", chargeSwitchOn);
+        if (chargeSwitchOn && !Boolean.TRUE.equals(switchState)) {
+            chargeStart = energy; startedAt = now; openId = "";
         }
+        if (chargeSwitchOn || Boolean.TRUE.equals(switchState)) {
+            recordIncrease(energy, now);
+        } else if (Boolean.FALSE.equals(switchState) && Double.isFinite(lastEnergy)) {
+            data.put("evEndpointsValid", true);
+            data.put("consumedKwh", data.optDouble("consumedKwh", 0) + lastEnergy - energy);
+        }
+        JSONObject entry = openEntry();
+        if (entry != null && entry.optString("status").equals("CANDIDATE")) {
+            if (now - entry.optLong("detectedAt", now) >= 6000) entry.put("stable", true);
+            if (!chargeSwitchOn && Boolean.TRUE.equals(switchState)) entry.put("switchEndedAt", now);
+        }
+        switchState = chargeSwitchOn; lastEnergy = energy;
+    }
+
+    private JSONObject openEntry() throws Exception {
+        JSONArray entries = data.optJSONArray("chargeCandidates");
+        if (entries != null) for (int i = 0; i < entries.length(); i++)
+            if (openId.equals(entries.getJSONObject(i).getString("id"))) return entries.getJSONObject(i);
+        return null;
+    }
+
+    private void recordIncrease(double energy, long now) throws Exception {
+        if (!Double.isFinite(chargeStart) || energy <= chargeStart) return;
+        JSONObject entry = openEntry();
+        if (entry == null) {
+            JSONArray entries = data.optJSONArray("chargeCandidates");
+            if (entries == null) { entries = new JSONArray(); data.put("chargeCandidates", entries); }
+            openId = UUID.randomUUID().toString();
+            entry = new JSONObject().put("id", openId).put("status", "CANDIDATE")
+                    .put("startAt", startedAt).put("detectedAt", now).put("basis", basis)
+                    .put("detectionSource", "PLEOS_EV_CHARGE_SWITCH");
+            entries.put(entry);
+        }
+        if (!entry.optString("status").equals("CANDIDATE")) return;
+        if (energy - chargeStart > entry.optDouble("estimatedKwh", 0))
+            entry.put("endAt", now).put("estimatedKwh", energy - chargeStart);
+        data.put("chargedDuringInterval", true);
     }
 
     /** Freeze a confirmed, same-user charging reference when the next recording starts. */

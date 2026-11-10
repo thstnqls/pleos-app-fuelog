@@ -145,6 +145,20 @@ public final class AaosVehicleDiagnosticService {
         });
     }
 
+    public interface EnergyObserver { void onSample(double wh, double capacityWh); }
+
+    public void readEvEnergy(EnergyObserver callback) {
+        CarPropertyManager manager = properties;
+        if (closed || manager == null) { callback.onSample(Double.NaN, Double.NaN); return; }
+        io.execute(() -> {
+            double wh = recordingValue(manager, VehiclePropertyIds.EV_BATTERY_LEVEL);
+            double capacity = recordingValue(manager, VehiclePropertyIds.EV_CURRENT_BATTERY_CAPACITY);
+            if (!Double.isFinite(capacity) || capacity <= 0) capacity = recordingValue(manager, VehiclePropertyIds.INFO_EV_BATTERY_CAPACITY);
+            final double fullCapacity = capacity;
+            main.post(() -> { if (!closed) callback.onSample(wh, fullCapacity); });
+        });
+    }
+
     private double recordingValue(CarPropertyManager manager, int id) {
         try {
             CarPropertyConfig<?> config = manager.getCarPropertyConfig(id);

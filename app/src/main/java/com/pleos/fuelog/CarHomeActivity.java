@@ -481,7 +481,8 @@ public final class CarHomeActivity extends AppCompatActivity {
         LinearLayout layout = grid(body);
         LinearLayout current = card(layout);
         tag(current, connection.linked ? trip.status(System.currentTimeMillis()) : "연결 필요");
-        subheading(current, "이번 운행 · D → P");
+        subheading(current, recorder.chargingInterval() ? "충전 관측 · 스위치 ON → OFF" : "이번 운행 · D → P");
+        paragraph(current, recorder.chargeSwitchStatus() + " · 실제 충전·결제 완료와 구분합니다");
         if (trip.sampledAt == 0) paragraph(current, trip.active ? "차량 거리 수신 대기" : "D 전환 대기 · 자동 기록");
         else number(current, String.format(Locale.KOREA, "%.1f", trip.distance), " km");
         paragraph(current, "마지막 샘플 · 최근 수신 " + timeLabel(trip.sampledAt));
@@ -507,8 +508,8 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void renderTrip() {
-        heading(body, "이번 운행");
         TripSummary summary = recorder.summary();
+        heading(body, summary != null && summary.data.optBoolean("chargingOnly") ? "충전 관측 요약" : "이번 운행");
         if (summary == null) {
             paragraph(body, "확인할 수 있는 운행 기록이 없습니다. 사용자를 확인하거나 기록을 시작해 주세요.");
             link(body, "연결 상태 확인", () -> navigate(SETTINGS)); return;
@@ -521,8 +522,9 @@ public final class CarHomeActivity extends AppCompatActivity {
                 + (end == 0 ? "기록 진행 중" : timeLabel(end)) + (data.optBoolean("endEstimated") ? " · 종료 시각 추정" : ""));
         LinearLayout distance = card(body);
         subheading(distance, "거리");
-        paragraph(distance, data.optBoolean("distanceValid") ? metric(data.optDouble("distanceKm"), " km") : data.optLong("sampledAt") == 0 ? "차량 거리 수신 대기" : "첫 거리 수신 · 다음 샘플 대기");
+        paragraph(distance, data.optBoolean("chargingOnly") ? "정차 충전 관측 구간 · 운행 거리 계산 대상 아님" : data.optBoolean("distanceValid") ? metric(data.optDouble("distanceKm"), " km") : data.optLong("sampledAt") == 0 ? "차량 거리 수신 대기" : "첫 거리 수신 · 다음 샘플 대기");
         if (electric) {
+            detail(body, "충전 스위치", !data.optBoolean("chargeSwitchKnown") ? "미확인" : data.optBoolean("chargeSwitchOn") ? "ON" : "OFF");
             detail(body, "추정 소모 전력량", Double.isFinite(summary.consumedKwh()) ? metric(summary.consumedKwh(), " kWh") : batterySummaryReason(data));
             detail(body, "추정 전비", Double.isFinite(summary.evEconomy()) ? metric(summary.evEconomy(), " km/kWh") : "유효한 거리와 소모 전력량 확인 필요");
             detail(body, "추정 전력비", Double.isFinite(summary.evCost()) ? metric(summary.evCost(), "원") : !Double.isFinite(summary.consumedKwh()) ? "소모 전력량 확인 필요" : data.has("currentPriceReference") ? "조회 위치 참고요금 결과는 아래 표시" : "확인된 충전 단가 없음");
@@ -672,12 +674,12 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private String batterySummaryReason(JSONObject data) {
-        if (checkSelfPermission("android.car.permission.CAR_ENERGY") != android.content.pm.PackageManager.PERMISSION_GRANTED)
+        if (!data.optBoolean("evDetected") && checkSelfPermission("android.car.permission.CAR_ENERGY") != android.content.pm.PackageManager.PERMISSION_GRANTED)
             return "배터리 읽기 권한 필요 · 연결·설정에서 허용";
         if (data.optBoolean("evMissing") || data.optBoolean("missing")) return "수신 누락 · 연속된 배터리 측정값 필요";
         if (data.optBoolean("chargedDuringInterval")) return "운행 중 배터리 증가 · 소모량 계산 제외";
-        if (!data.optBoolean("evDetected")) return "D/R 기어의 시작 배터리 수신 대기";
-        if (!data.optBoolean("evEndpointsValid")) return "P 기어의 종료 배터리 수신 대기";
+        if (!data.optBoolean("evDetected")) return "충전 스위치·배터리 수신 대기";
+        if (!data.optBoolean("evEndpointsValid")) return "비충전 구간의 배터리 샘플 대기";
         return "배터리 감소량 없음";
     }
 

@@ -59,7 +59,12 @@ public class EnergyAvailabilityAndroidTest {
             JSONObject row=new JSONObject();rows.put(name,row);
             int id;
             try {id=VehiclePropertyIds.class.getField(name).getInt(null);}
-            catch(NoSuchFieldException absent) {row.put("definition","ABSENT_ON_PLATFORM");continue;}
+            catch(NoSuchFieldException absent) {
+                row.put("definition","ABSENT_ON_PLATFORM");
+                if(name.equals("INSTANTANEOUS_EV_EFFICIENCY")) id=VehiclePropertyIds.INSTANTANEOUS_EV_EFFICIENCY;
+                else if(name.equals("INSTANTANEOUS_FUEL_ECONOMY")) id=VehiclePropertyIds.INSTANTANEOUS_FUEL_ECONOMY;
+                else continue;
+            }
             try {
                 var config=manager.getCarPropertyConfig(id);
                 if(config==null) row.put("config","NOT_EXPOSED");
@@ -121,6 +126,23 @@ public class EnergyAvailabilityAndroidTest {
             }
             report.put("energyPermissionAfter",context.checkSelfPermission("android.car.permission.CAR_ENERGY")==PackageManager.PERMISSION_GRANTED)
                     .put("aaosAfter",aaos(manager[0]));
+            CountDownLatch initialState=new CountDownLatch(1);
+            JSONObject subscription=new JSONObject();
+            CarPropertyManager.CarPropertyEventCallback listener=new CarPropertyManager.CarPropertyEventCallback() {
+                public void onChangeEvent(android.car.hardware.CarPropertyValue value) {
+                    try {synchronized(subscription) {subscription.put("status",value.getStatus()).put("value",value.getValue()).put("timestampNanos",value.getTimestamp());}}
+                    catch(Exception invalid) {throw new AssertionError(invalid);}
+                    initialState.countDown();
+                }
+                public void onErrorEvent(int propertyId,int areaId) {initialState.countDown();}
+            };
+            try {
+                boolean registered=manager[0].registerCallback(listener,VehiclePropertyIds.EV_CHARGE_STATE,CarPropertyManager.SENSOR_RATE_ONCHANGE);
+                subscription.put("registered",registered).put("callbackReceived",initialState.await(3,TimeUnit.SECONDS));
+            } catch(Exception ex) {subscription.put("error",error(ex));}
+            finally {manager[0].unregisterCallback(listener);}
+            report.put("chargeStateSubscription",subscription);
+            android.util.Log.i("FuelogEnergyProbe",new JSONObject().put("section","subscription").put("name","EV_CHARGE_STATE").put("reading",subscription).toString());
             Files.write(new File(context.getCacheDir(),"energy-availability.json").toPath(),report.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             // UTP may uninstall the target after the probe; retain read-only energy evidence in test artifacts.
             for(String section:new String[]{"pleos","aaosBefore","aaosAfter","permissionsBefore"}) {
