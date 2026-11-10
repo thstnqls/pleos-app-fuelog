@@ -316,10 +316,15 @@ public final class ConnectionSession {
     }
 
     public Call requestMaintenance(String method, String path, JSONObject body, String revision, ApiClient.ResultCallback callback) {
+        return requestMaintenance(method, path, body, revision, "", callback);
+    }
+
+    public Call requestMaintenance(String method, String path, JSONObject body, String revision, String idempotencyKey, ApiClient.ResultCallback callback) {
         if (api == null || !linked || authenticatedSubject.isEmpty() || vehicleId.isEmpty())
             throw new IllegalStateException("Verified vehicle owner required");
         Map<String, String> headers = new HashMap<>();
         if (revision != null && !revision.isEmpty()) headers.put("If-Match", revision);
+        if (idempotencyKey != null && !idempotencyKey.isEmpty()) headers.put("Idempotency-Key", idempotencyKey);
         return api.request(method, path, body == null ? null : body.toString(), credential, headers, callback);
     }
 

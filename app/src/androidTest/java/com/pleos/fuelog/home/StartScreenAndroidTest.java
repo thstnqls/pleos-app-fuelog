@@ -189,6 +189,57 @@ public class StartScreenAndroidTest {
                 assertEquals(12, submitted.getJSONObject("plan").getInt("intervalMonths"));
                 assertEquals("2026-01-01", submitted.getString("lastServiceDate"));
                 assertEquals("/maintenance/summary", server.takeRequest(5, TimeUnit.SECONDS).getPath());
+                MaintenancePlanEditor[] completionEditor = {null};
+                int[] completed = {0};
+                scenario.onActivity(activity -> {
+                    assertFalse(form[0].isShowing());
+                    try {
+                        completionEditor[0] = new MaintenancePlanEditor(activity, connection, () -> true, () -> completed[0]++);
+                        var showCompletion = MaintenancePlanEditor.class.getDeclaredMethod("form", org.json.JSONObject.class);
+                        showCompletion.setAccessible(true);
+                        showCompletion.invoke(completionEditor[0], new org.json.JSONObject().put("id", "cycle-id").put("revision", 4)
+                                .put("name", "타이어").put("intervalKm", 10000));
+                        androidx.appcompat.app.AlertDialog edit = (androidx.appcompat.app.AlertDialog) get(completionEditor[0], "dialog");
+                        edit.findViewById(android.R.id.content).findViewWithTag("maintenance.complete").performClick();
+                        form[0] = (androidx.appcompat.app.AlertDialog) get(completionEditor[0], "dialog");
+                        View fields = form[0].findViewById(android.R.id.content);
+                        findInput(fields, "실제 교체일 · YYYY-MM-DD").setText("2026-01-10");
+                        findInput(fields, "교체 당시 누적거리 km · 필수").setText("52000");
+                    } catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                server.enqueue(new MockResponse().setResponseCode(503).setBody("{}"));
+                scenario.onActivity(activity -> {
+                    form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick();
+                    form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick();
+                });
+                var firstCompletion = server.takeRequest(5, TimeUnit.SECONDS);
+                assertEquals("POST", firstCompletion.getMethod());
+                assertEquals("/maintenance/plans/cycle-id/complete", firstCompletion.getPath());
+                assertEquals("4", firstCompletion.getHeader("If-Match"));
+                assertNotNull(firstCompletion.getHeader("Idempotency-Key"));
+                String completionBody = firstCompletion.getBody().readUtf8();
+                org.json.JSONObject confirmation = new org.json.JSONObject(completionBody);
+                assertTrue(confirmation.getBoolean("confirmed"));
+                assertEquals("2026-01-10", confirmation.getString("serviceDate"));
+                assertEquals(52000, confirmation.getDouble("odometerKm"), 0);
+                boolean[] retryReady = {false};
+                long retryDeadline = android.os.SystemClock.elapsedRealtime() + 5000;
+                while (!retryReady[0] && android.os.SystemClock.elapsedRealtime() < retryDeadline) {
+                    scenario.onActivity(activity -> retryReady[0] = form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).isEnabled());
+                    if (!retryReady[0]) android.os.SystemClock.sleep(25);
+                }
+                assertTrue(retryReady[0]);
+                server.enqueue(new MockResponse().setBody("{\"event\":{},\"completedPlan\":{},\"nextPlan\":{\"id\":\"next-cycle\",\"revision\":1}}"));
+                scenario.onActivity(activity -> form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick());
+                var retryCompletion = server.takeRequest(5, TimeUnit.SECONDS);
+                assertEquals(firstCompletion.getHeader("Idempotency-Key"), retryCompletion.getHeader("Idempotency-Key"));
+                assertEquals(completionBody, retryCompletion.getBody().readUtf8());
+                long completionDeadline = android.os.SystemClock.elapsedRealtime() + 5000;
+                while (completed[0] == 0 && android.os.SystemClock.elapsedRealtime() < completionDeadline) {
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                    android.os.SystemClock.sleep(25);
+                }
+                assertEquals(1, completed[0]);
                 scenario.onActivity(activity -> {
                     assertFalse(form[0].isShowing());
                     try {

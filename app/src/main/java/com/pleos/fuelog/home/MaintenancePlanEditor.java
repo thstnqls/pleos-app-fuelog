@@ -4,6 +4,7 @@ import android.text.InputType;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -69,6 +70,13 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         TextView note = new TextView(activity);
         note.setText("거리·기간 중 하나 이상을 입력해 주세요. D-day는 마지막 교체일과 기간 주기로 계산합니다. 과거 교체 이력 보정은 모바일에서 진행하며, 저장한 주기는 차량 설정으로 표시됩니다.");
         fields.addView(note);
+        if (revision > 0) {
+            Button complete = new Button(activity);
+            complete.setText("교체 완료 확인");
+            complete.setTag("maintenance.complete");
+            complete.setOnClickListener(v -> { if (active() && call == null) completion(item); });
+            fields.addView(complete);
+        }
         TextView failure = new TextView(activity);
         formError = failure;
         fields.addView(failure);
@@ -99,6 +107,59 @@ public final class MaintenancePlanEditor implements AutoCloseable {
             } catch (Exception invalid) { failure.setText("항목명·양수 주기(km 또는 1~1200개월)·날짜 형식을 확인해 주세요."); }
         }));
         dialog.show();
+    }
+
+    private void completion(JSONObject item) {
+        if (dialog != null) dialog.dismiss();
+        LinearLayout fields = new LinearLayout(activity);
+        fields.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (24 * activity.getResources().getDisplayMetrics().density);
+        fields.setPadding(pad, pad, pad, pad);
+        TextView note = new TextView(activity);
+        note.setText("실제로 교체한 경우에만 완료를 확인해 주세요. 다음 예정은 입력한 교체일·거리부터 계산하며, 완료 확인 이력은 수정·삭제할 수 없습니다.");
+        fields.addView(note);
+        EditText date = field(fields, "실제 교체일 · YYYY-MM-DD", "",
+                InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_DATE);
+        EditText km = field(fields, item.isNull("intervalKm") ? "교체 당시 누적거리 km · 선택" : "교체 당시 누적거리 km · 필수", "",
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        TextView failure = new TextView(activity);
+        formError = failure;
+        fields.addView(failure);
+        ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
+        String key = UUID.randomUUID().toString();
+        JSONObject[] submitted = {null};
+        dialog = new AlertDialog.Builder(activity).setTitle(item.optString("name") + " · 교체 완료")
+                .setView(scroll).setNegativeButton("취소", null).setPositiveButton("완료 확인", null).create();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (!active() || call != null) return;
+            try {
+                if (submitted[0] == null) submitted[0] = completionBody(date.getText().toString(), km.getText().toString(), item);
+                // A lost response must retry the same body and key.
+                date.setEnabled(false); km.setEnabled(false);
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
+                dialog.setCancelable(false);
+                failure.setText("완료 확인 중");
+                request("POST", "maintenance/plans/" + item.getString("id") + "/complete", submitted[0],
+                        Long.toString(item.getLong("revision")), key, result -> completed());
+            } catch (Exception invalid) { failure.setText("실제 교체일과 누적거리를 확인해 주세요. 기존 교체 기록보다 이전 값은 입력할 수 없습니다."); }
+        }));
+        dialog.show();
+    }
+
+    public static JSONObject completionBody(String date, String km, JSONObject item) throws Exception {
+        LocalDate serviceDate = LocalDate.parse(date.trim());
+        if (serviceDate.getYear() < 1900 || serviceDate.isAfter(LocalDate.now(ZoneId.of("Asia/Seoul")))
+                || !item.isNull("lastServiceDate") && serviceDate.isBefore(LocalDate.parse(item.getString("lastServiceDate"))))
+            throw new IllegalArgumentException();
+        BigDecimal distance = distance(km);
+        if (!item.isNull("intervalKm") && distance == null
+                || distance != null && !item.isNull("lastServiceKm") && distance.compareTo(new BigDecimal(item.get("lastServiceKm").toString())) < 0)
+            throw new IllegalArgumentException();
+        JSONObject body = new JSONObject().put("confirmed", true).put("serviceDate", serviceDate.toString());
+        if (distance != null) body.put("odometerKm", distance);
+        return body;
     }
 
     public static JSONObject body(String name, String km, String months, String date, String lastKm, String operation) throws Exception {
@@ -138,9 +199,12 @@ public final class MaintenancePlanEditor implements AutoCloseable {
     private static String text(JSONObject item, String key) { return item.isNull(key) ? "" : item.optString(key, ""); }
     private interface Success { void accept(JSONObject result) throws Exception; }
     private void request(String method, String path, JSONObject body, String revision, Success success) {
+        request(method, path, body, revision, "", success);
+    }
+    private void request(String method, String path, JSONObject body, String revision, String idempotencyKey, Success success) {
         if (!active() || call != null) return;
         try {
-            call = connection.requestMaintenance(method, path, body, revision, new ApiClient.ResultCallback() {
+            call = connection.requestMaintenance(method, path, body, revision, idempotencyKey, new ApiClient.ResultCallback() {
                 public void onSuccess(ApiClient.ApiResponse response) { activity.runOnUiThread(() -> {
                     call = null;
                     if (!active()) return;

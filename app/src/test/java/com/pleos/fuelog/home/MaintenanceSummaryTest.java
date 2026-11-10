@@ -8,6 +8,12 @@ import java.time.LocalDate;
 import static org.junit.Assert.*;
 
 public class MaintenanceSummaryTest {
+    @Test public void serverDangerIsDisplayedWithoutRecomputingTheCycle() throws Exception {
+        JSONObject item = new JSONObject().put("name", "엔진오일").put("riskLevel", "DANGER");
+        MaintenanceSummary result = new MaintenanceSummary(new JSONObject().put("items", new org.json.JSONArray().put(item)));
+        assertEquals("위험 · 설정한 교체 주기의 150% 이상 경과",
+                result.items.get(0).status(result, LocalDate.of(2026, 11, 10), 0));
+    }
     private MaintenanceSummary summary(long observedAt, double odometerKm, String nextDate,
                                        double nextKm) throws Exception {
         return new MaintenanceSummary(new JSONObject().put("odometer", new JSONObject()

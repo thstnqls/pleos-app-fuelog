@@ -48,9 +48,11 @@ public final class MaintenanceSummary {
         public final Double intervalKm;
         public final Integer intervalMonths;
         public final String basis;
+        public final String riskLevel;
 
         private Item(JSONObject value) throws JSONException {
             name = value.getString("name").trim();
+            riskLevel = value.optString("riskLevel", "UNKNOWN");
             if (name.isEmpty()) throw new JSONException("item name missing");
             lastDate = date(value, "lastServiceDate");
             nextDate = date(value, "nextDueDate");
@@ -86,6 +88,7 @@ public final class MaintenanceSummary {
         }
 
         public String status(MaintenanceSummary summary, LocalDate today, long now) {
+            if ("DANGER".equals(riskLevel)) return "위험 · 설정한 교체 주기의 150% 이상 경과";
             Double distance = kmUntil(summary, now);
             boolean dateDue = daysUntil(today) <= 0;
             boolean distanceDue = distance != null && distance <= 0;

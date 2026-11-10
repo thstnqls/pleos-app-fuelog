@@ -3,6 +3,21 @@ import org.junit.Test;
 import org.json.JSONObject;
 import static org.junit.Assert.*;
 public class MaintenancePlanEditorTest {
+    @Test public void completionRequiresActualDateAndDistanceForDistanceCycles() throws Exception {
+        JSONObject item = new JSONObject().put("intervalKm", 10000).put("lastServiceDate", "2026-01-01").put("lastServiceKm", 42000);
+        JSONObject body = MaintenancePlanEditor.completionBody("2026-01-10", "52000", item);
+        assertTrue(body.getBoolean("confirmed"));
+        assertEquals("2026-01-10", body.getString("serviceDate"));
+        assertEquals(52000, body.getDouble("odometerKm"), 0);
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("", "52000", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2026-01-10", "", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2026-01-10", "41999", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2025-12-31", "52000", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2999-01-01", "52000", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2026-02-30", "52000", item));
+        assertThrows(Exception.class, () -> MaintenancePlanEditor.completionBody("2026-01-10", "-1", item));
+        assertFalse(MaintenancePlanEditor.completionBody("2026-01-10", "", new JSONObject()).has("odometerKm"));
+    }
     @Test public void ownerFormBuildsSharedCycleAndOptionalServiceEvidence() throws Exception {
         JSONObject body = MaintenancePlanEditor.body(" 타이어 ", "10000", "12", "2026-01-01", "45000", "edit-1");
         assertTrue(body.getJSONObject("plan").getBoolean("shared"));
