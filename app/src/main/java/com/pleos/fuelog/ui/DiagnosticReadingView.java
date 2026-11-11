@@ -34,27 +34,27 @@ public final class DiagnosticReadingView extends LinearLayout {
         super(context);
         this.api = api;
         setOrientation(VERTICAL);
-        setPadding(0, dp(12), 0, dp(12));
+        setPadding(0, dp(20), 0, dp(20));
         foreground = MaterialColors.getColor(this, R.attr.colorOnSurface);
 
         LinearLayout header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text(label, 15);
+        TextView title = text(label, 24);
         title.setTypeface(null, Typeface.BOLD);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        badge = text("", 12);
+        badge = text("", 20);
         badge.setPadding(dp(8), dp(4), dp(8), dp(4));
         LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
         badgeParams.setMarginStart(dp(8));
         header.addView(badge, badgeParams);
         addView(header);
 
-        reading = text("—", 24);
+        reading = text("—", 36);
         reading.setTypeface(null, Typeface.BOLD);
         addView(reading);
-        detail = text("", 12);
+        detail = text("", 20);
         addView(detail);
-        metadata = text(api, 11);
+        metadata = text(api, 20);
         int surface = MaterialColors.getColor(this, R.attr.colorSurface);
         metadata.setTextColor(ColorUtils.blendARGB(surface, foreground, 0.68f));
         addView(metadata);

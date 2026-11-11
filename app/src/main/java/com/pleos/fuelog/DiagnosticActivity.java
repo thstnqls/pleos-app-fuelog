@@ -85,12 +85,12 @@ public final class DiagnosticActivity extends AppCompatActivity {
                         R.attr.borderlessButtonStyle);
         back.setText("←  차량 화면으로");
         back.setAllCaps(false);
-        back.setTextSize(16);
-        back.setMinHeight(dp(56));
+        back.setTextSize(24);
+        back.setMinHeight(dp(72));
         back.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         back.setContentDescription("차량 화면으로 돌아가기");
         back.setOnClickListener(view -> finish());
-        root.addView(back, new LinearLayout.LayoutParams(-1, dp(56)));
+        root.addView(back, new LinearLayout.LayoutParams(-1, -2));
         TabLayout tabs = new TabLayout(this);
         tabs.setTag("diagnostic.tabs");
         tabs.setTabMode(TabLayout.MODE_AUTO);
@@ -487,7 +487,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
 
     private LinearLayout card(LinearLayout parent, String title, String subtitle) {
         MaterialCardView frame = new MaterialCardView(this);
-        frame.setRadius(dp(14));
+        frame.setRadius(dp(28));
         frame.setCardElevation(0);
         frame.setStrokeWidth(dp(1));
         frame.setStrokeColor(androidx.core.graphics.ColorUtils.setAlphaComponent(
@@ -514,7 +514,8 @@ public final class DiagnosticActivity extends AppCompatActivity {
 
     private LinearLayout actionRow(LinearLayout parent) {
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setOrientation(getResources().getConfiguration().screenWidthDp < 600
+                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setBaselineAligned(false);
         parent.addView(row);
@@ -524,7 +525,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     private TextView text(LinearLayout parent, String value, int sp) {
         TextView view = new TextView(this);
         view.setText(value);
-        view.setTextSize(sp);
+        view.setTextSize(Math.max(22, sp + 4));
         parent.addView(view, new LinearLayout.LayoutParams(-1, -2));
         return view;
     }
@@ -535,9 +536,11 @@ public final class DiagnosticActivity extends AppCompatActivity {
                         R.attr.materialButtonOutlinedStyle);
         button.setText(label);
         button.setAllCaps(false);
-        button.setMinHeight(dp(56));
-        button.setCornerRadius(dp(10));
-        button.setTextSize(14);
+        button.setSingleLine(false);
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setMinHeight(dp(64));
+        button.setCornerRadius(dp(20));
+        button.setTextSize(24);
         button.setLetterSpacing(0);
         button.setMinimumWidth(0);
         if (action != null) button.setOnClickListener(view -> action.run());

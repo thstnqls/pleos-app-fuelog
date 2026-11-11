@@ -305,16 +305,17 @@ public final class CarHomeActivity extends AppCompatActivity {
         for (int i = 0; i < navPages.length; i++) {
             final int destination = navPages[i];
             Button tab = headerAction(navLabels[i], () -> navigate(destination));
-            if (page == destination) {
-                tab.setTextColor(color(R.color.car_link));
-                tab.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            }
-            LinearLayout item = column();
-            navigation.addView(item, new LinearLayout.LayoutParams(0, dp(68), 1));
-            item.addView(tab, new LinearLayout.LayoutParams(-1, 0, 1));
-            View indicator = new View(this);
-            indicator.setBackgroundColor(color(page == destination ? R.color.car_accent_mid : R.color.car_panel));
-            item.addView(indicator, new LinearLayout.LayoutParams(-1, dp(5)));
+            boolean selected = page == destination;
+            tab.setSelected(selected);
+            tab.setTextSize(24);
+            tab.setTextColor(color(selected ? R.color.car_on_accent : R.color.car_muted));
+            tab.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)),
+                    shape(selected ? R.color.car_accent : R.color.car_soft, 24, 0), null));
+            LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(0, -2, 1);
+            tabParams.setMargins(dp(5), dp(4), dp(5), dp(4));
+            tab.setMinHeight(dp(64));
+            tab.setPadding(dp(8), dp(8), dp(8), dp(8));
+            navigation.addView(tab, tabParams);
         }
     }
 
@@ -323,7 +324,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         TabLayout tabs = new TabLayout(this);
         tabs.setTag("start.tabs");
         tabs.setBackgroundColor(color(R.color.car_panel));
-        tabs.setTabTextColors(color(R.color.car_muted), color(R.color.car_link));
+        tabs.setTabTextColors(color(R.color.car_muted), color(R.color.car_on_accent));
         tabs.setSelectedTabIndicatorColor(color(R.color.car_accent));
         tabs.addTab(tabs.newTab().setText("QR 연결"));
         tabs.addTab(tabs.newTab().setText("차량 기본정보"));
@@ -1406,8 +1407,8 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private LinearLayout card(LinearLayout parent) {
         LinearLayout card = column();
-        card.setPadding(dp(20), dp(20), dp(20), dp(20));
-        card.setBackground(shape(R.color.car_panel, 20, R.color.car_line));
+        card.setPadding(dp(16), dp(16), dp(16), dp(16));
+        card.setBackground(shape(R.color.car_panel, 28, R.color.car_line));
         parent.addView(card, parent.getOrientation() == LinearLayout.HORIZONTAL ? gridCell() : cardParams());
         return card;
     }
@@ -1440,15 +1441,15 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private LinearLayout.LayoutParams cardParams() {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(14));
+        params.setMargins(0, 0, 0, dp(10));
         return params;
     }
 
-    private void heading(LinearLayout parent, String value) { addText(parent, value, 38, true, false, 0, 0, 0, 18); }
+    private void heading(LinearLayout parent, String value) { addText(parent, value, 42, true, false, 0, 0, 0, 24); }
 
-    private void subheading(LinearLayout parent, String value) { addText(parent, value, 26, true, false, 0, 0, 0, 10); }
+    private void subheading(LinearLayout parent, String value) { addText(parent, value, 30, true, false, 0, 0, 0, 14); }
 
-    private void paragraph(LinearLayout parent, String value) { addText(parent, value, 20, false, true, 0, 5, 0, 12); }
+    private void paragraph(LinearLayout parent, String value) { addText(parent, value, 24, false, true, 0, 6, 0, 16); }
 
     private void tag(LinearLayout parent, String value) {
         TextView badge = label(value, 18, true, false);
@@ -1456,7 +1457,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         badge.setPadding(dp(12), dp(8), dp(12), dp(8));
         badge.setBackground(shape(R.color.car_dark, 24, 0));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
-        params.setMargins(0, 0, 0, dp(14));
+        params.setMargins(0, 0, 0, dp(10));
         parent.addView(badge, params);
     }
 
@@ -1464,11 +1465,11 @@ public final class CarHomeActivity extends AppCompatActivity {
         LinearLayout.LayoutParams space = new LinearLayout.LayoutParams(-1, dp(24));
         parent.addView(new View(this), space);
         divider(parent);
-        addText(parent, value, 19, true, true, 0, 18, 0, 20);
+        addText(parent, value, 26, true, false, 0, 20, 0, 20);
     }
 
     private void number(LinearLayout parent, String amount, String unit) {
-        TextView value = label(amount + unit, 64, true, false);
+        TextView value = label(amount + unit, 72, true, false);
         SpannableString styled = new SpannableString(amount + unit);
         styled.setSpan(new RelativeSizeSpan(0.38f), amount.length(), styled.length(), 0);
         value.setText(styled);
@@ -1478,13 +1479,15 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void detail(LinearLayout parent, String key, String value) {
-        LinearLayout line = row();
-        line.setPadding(0, dp(18), 0, dp(18));
-        parent.addView(line);
-        TextView name = label(key, 20, false, true);
-        line.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        line.addView(label(value, 22, true, false));
-        divider(parent);
+        LinearLayout line = column();
+        line.setPadding(dp(16), dp(12), dp(16), dp(12));
+        line.setBackground(shape(R.color.car_soft, 20, 0));
+        parent.addView(line, cardParams());
+        TextView name = label(key, 22, false, true);
+        line.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        TextView reading = label(value, 32, true, false);
+        reading.setPadding(0, dp(8), 0, 0);
+        line.addView(reading, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void addText(LinearLayout parent, String value, int sp, boolean bold, boolean muted,
@@ -1499,7 +1502,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setLineSpacing(dp(3), 1f);
-        view.setTextSize(compact() ? sp * 0.9f : sp);
+        view.setTextSize(Math.max(22, sp));
         view.setTextColor(color(muted ? R.color.car_muted : R.color.car_foreground));
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
@@ -1518,16 +1521,20 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private LinearLayout.LayoutParams fullButton() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(68));
-        params.setMargins(0, dp(8), 0, dp(16));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, dp(4), 0, dp(8));
         return params;
     }
 
     private Button button(String title, boolean primary, Runnable action) {
         Button button = new Button(this);
         button.setText(title);
-        button.setTextSize(compact() ? 20 : 22);
+        button.setTextSize(24);
         button.setAllCaps(false);
+        button.setSingleLine(false);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setMinimumWidth(0);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setElevation(0);
         button.setStateListAnimator(null);
@@ -1546,8 +1553,12 @@ public final class CarHomeActivity extends AppCompatActivity {
     private Button headerAction(String title, Runnable action) {
         Button button = new Button(this);
         button.setText(title);
-        button.setTextSize(compact() ? 18 : 20);
+        button.setTextSize(22);
         button.setAllCaps(false);
+        button.setSingleLine(false);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setMinimumWidth(0);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setElevation(0);
         button.setStateListAnimator(null);

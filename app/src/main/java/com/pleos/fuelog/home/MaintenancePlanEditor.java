@@ -60,7 +60,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         String operation = "vehicle-maintenance:" + UUID.randomUUID();
         LinearLayout fields = new LinearLayout(activity);
         fields.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (24 * activity.getResources().getDisplayMetrics().density);
+        int pad = (int) (16 * activity.getResources().getDisplayMetrics().density);
         fields.setPadding(pad, pad, pad, pad);
         EditText name = field(fields, "정비 항목", text(item, "name"), InputType.TYPE_CLASS_TEXT);
         EditText km = field(fields, "교체주기 km · 선택", text(item, "intervalKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -68,16 +68,20 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         EditText date = field(fields, "마지막 교체일 · YYYY-MM-DD · 선택", text(item, "lastServiceDate"), InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_DATE);
         EditText lastKm = field(fields, "마지막 교체 당시 누적거리 km · 선택", text(item, "lastServiceKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         TextView note = new TextView(activity);
+        note.setTextSize(22);
         note.setText("거리·기간 중 하나 이상을 입력해 주세요. D-day는 마지막 교체일과 기간 주기로 계산합니다. 과거 교체 이력 보정은 모바일에서 진행하며, 저장한 주기는 차량 설정으로 표시됩니다.");
         fields.addView(note);
         if (revision > 0) {
             Button complete = new Button(activity);
             complete.setText("교체 완료 확인");
+            complete.setTextSize(24);
+            complete.setMinHeight((int) (72 * activity.getResources().getDisplayMetrics().density));
             complete.setTag("maintenance.complete");
             complete.setOnClickListener(v -> { if (active() && call == null) completion(item); });
             fields.addView(complete);
         }
         TextView failure = new TextView(activity);
+        failure.setTextSize(22);
         formError = failure;
         fields.addView(failure);
         ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
@@ -113,9 +117,10 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         if (dialog != null) dialog.dismiss();
         LinearLayout fields = new LinearLayout(activity);
         fields.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (24 * activity.getResources().getDisplayMetrics().density);
+        int pad = (int) (16 * activity.getResources().getDisplayMetrics().density);
         fields.setPadding(pad, pad, pad, pad);
         TextView note = new TextView(activity);
+        note.setTextSize(22);
         note.setText("실제로 교체한 경우에만 완료를 확인해 주세요. 다음 예정은 입력한 교체일·거리부터 계산하며, 완료 확인 이력은 수정·삭제할 수 없습니다.");
         fields.addView(note);
         EditText date = field(fields, "실제 교체일 · YYYY-MM-DD", "",
@@ -123,6 +128,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         EditText km = field(fields, item.isNull("intervalKm") ? "교체 당시 누적거리 km · 선택" : "교체 당시 누적거리 km · 필수", "",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         TextView failure = new TextView(activity);
+        failure.setTextSize(22);
         formError = failure;
         fields.addView(failure);
         ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
@@ -188,9 +194,9 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         return value;
     }
     private EditText field(LinearLayout parent, String label, String value, int type) {
-        TextView title = new TextView(activity); title.setText(label); parent.addView(title);
+        TextView title = new TextView(activity); title.setText(label); title.setTextSize(24); parent.addView(title);
         EditText input = new EditText(activity); input.setContentDescription(label); input.setInputType(type);
-        input.setSingleLine(true); input.setText(value); input.setTextSize(20);
+        input.setSingleLine(true); input.setText(value); input.setTextSize(26);
         input.setImeOptions(input.getImeOptions() | EditorInfo.IME_FLAG_NO_FULLSCREEN);
         input.setHint(label);
         input.setMinHeight((int) (64 * activity.getResources().getDisplayMetrics().density));
