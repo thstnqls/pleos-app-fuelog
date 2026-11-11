@@ -28,15 +28,20 @@ public final class TripSummary {
     public double evEconomy() {
         return data.optBoolean("distanceValid") ? efficiency(data.optDouble("distanceKm"), consumedKwh()) : Double.NaN;
     }
-    public double evCost() {
-        return cost(consumedKwh(), data.optDouble("chargeUnitPriceWonPerKwh", Double.NaN),
-                data.optBoolean("chargePriceValid") && !data.optString("chargePriceSource").isEmpty());
+    public static boolean validSavedCost(JSONObject cost) {
+        if(cost==null) return false;
+        try {
+            double amount=cost.getDouble("amount"),rate=cost.getDouble("averageWonPerKwh"),energy=cost.getDouble("consumedKwh");
+            boolean basis="SLOW_THREE_OPERATOR_MEAN".equals(cost.getString("basis")) && cost.getInt("sourceCount")==3
+                    || "LEGACY_SAVED_ESTIMATE".equals(cost.getString("basis"));
+            java.time.LocalDate.parse(cost.getString("tariffDate"));java.time.Instant.parse(cost.getString("calculatedAt"));
+            return basis && "KRW".equals(cost.getString("currency")) && Double.isFinite(amount) && amount>=0
+                    && Double.isFinite(rate) && rate>0 && Double.isFinite(energy) && energy>0;
+        } catch(Exception invalid) {return false;}
     }
-    public double referenceCost(JSONObject scenario) {
-        if (scenario == null) return Double.NaN;
-        org.json.JSONArray stations = scenario.optJSONArray("stations");
-        return cost(consumedKwh(), scenario.optDouble("averageWonPerKwh", Double.NaN),
-                stations != null && stations.length() >= 2 && stations.length() <= 3);
+    public double evCost() {
+        JSONObject cost=data.optJSONObject("savedEvCost");
+        return validSavedCost(cost)?cost.optDouble("amount",Double.NaN):Double.NaN;
     }
     public double liters() {
         return consumption(data.optDouble("startFuelLiters", Double.NaN), data.optDouble("endFuelLiters", Double.NaN),

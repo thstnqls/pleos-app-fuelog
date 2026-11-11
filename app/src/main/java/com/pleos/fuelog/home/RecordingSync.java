@@ -24,6 +24,7 @@ public final class RecordingSync {
     private long privacyGeneration;
     public Consumer<JSONObject> onChargeResponse = response -> {};
     public Consumer<JSONObject> onFuelResponse = response -> {};
+    public java.util.function.BiConsumer<String,JSONObject> onSummaryResponse = (id,response) -> {};
     public String message = "서버 동기화 대기";
     private Runnable changed = () -> {};
 
@@ -121,6 +122,17 @@ public final class RecordingSync {
         return entry == null ? null : entry.optJSONObject("summary");
     }
 
+    public void refreshSummary(String localId, String candidate) throws Exception {
+        JSONObject interval = state.getJSONObject("intervals").optJSONObject(localId);
+        if (interval == null || !interval.optBoolean("ended")) return;
+        JSONArray jobs = state.getJSONArray("jobs");
+        for (int i = 0; i < jobs.length(); i++) {
+            JSONObject job = jobs.getJSONObject(i);
+            if (localId.equals(job.optString("localId")) && "summary".equals(job.optString("kind"))) return;
+        }
+        enqueue("GET", "recording-intervals/{id}/summary", null, localId, candidate, "", "summary");
+    }
+
     public boolean delivered(String localId) {
         JSONObject entry = state.optJSONObject("intervals").optJSONObject(localId);
         return entry != null && entry.optBoolean("delivered");
@@ -191,7 +203,10 @@ public final class RecordingSync {
                             interval.put("id", result.getString("id"));
                             if (!result.isNull("subjectId")) interval.put("subjectId", result.getString("subjectId"));
                         }
-                        else if (kind.equals("summary") && requestPrivacy == privacyGeneration) interval.put("summary", result);
+                        else if (kind.equals("summary") && requestPrivacy == privacyGeneration) {
+                            interval.put("summary", result);
+                            onSummaryResponse.accept(localId,result);
+                        }
                         else if (kind.equals("deliver")) interval.put("delivered", true);
                         else if (kind.equals("fuel")) onFuelResponse.accept(result);
                         else if (kind.equals("charge")) onChargeResponse.accept(result);

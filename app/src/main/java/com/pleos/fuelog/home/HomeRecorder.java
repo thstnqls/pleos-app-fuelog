@@ -30,6 +30,7 @@ public final class HomeRecorder {
     private FuelCandidates fuelCandidates;
     private final FuelStationEnrichment stationEnrichment;
     private final ChargeEnrichment chargeEnrichment;
+    private final TripCostSync tripCosts;
     private final EvRecording ev = new EvRecording();
     private EncryptedJsonStore evStore;
     private JSONObject evIntervals;
@@ -71,8 +72,10 @@ public final class HomeRecorder {
         connection = ConnectionSession.get(context);
         stationEnrichment = new FuelStationEnrichment(context, this, connection);
         chargeEnrichment = new ChargeEnrichment(context, this, connection);
+        tripCosts = new TripCostSync(context, this, connection);
         try {
             sync = new RecordingSync(context, connection);
+            sync.onSummaryResponse = tripCosts::summaryReady;
             sync.onChargeResponse = response -> {
                 try { applyChargeResponse(response); chargeEnrichment.synced(response); }
                 catch (Exception error) { storageError = "충전 동기화 응답 저장 실패"; }
@@ -152,7 +155,6 @@ public final class HomeRecorder {
                 candidateId = "";
                 ev.reset();
                 chargingOnly = false; finishAfterEv = false;
-                ev.setPriceReference(evIntervals, owner, startedAt);
                 trip.start();
             } catch (Exception e) { storageError = verifiedOwner().isEmpty() ? "페어링 사용자 확인 후 기록을 시작해 주세요" : "업로드 큐 저장 실패 · 기록 시작 보류"; }
         }
@@ -189,6 +191,7 @@ public final class HomeRecorder {
         trip.sampledAt = 0;
         trip.sampleCount = 0;
         save();
+        tripCosts.prepare(withEv(ended), true);
     }
 
     // 4. 사용자 유지: 서버에서 확인한 페어링 사용자만 적용하고 기존 구간의 소유자는 바꾸지 않는다.
@@ -510,6 +513,8 @@ public final class HomeRecorder {
         JSONObject remote = sync == null ? null : sync.summary(snapshot.optString("intervalId"));
         JSONObject quality = remote == null ? null : remote.optJSONObject("quality");
         if (quality != null && quality.optBoolean("missing")) merged.put("missing", true);
+        if (remote != null && remote.optJSONObject("savedEvCost") != null && !merged.has("savedEvCost"))
+            merged.put("savedEvCost",remote.getJSONObject("savedEvCost"));
         return merged;
     }
 
@@ -529,17 +534,74 @@ public final class HomeRecorder {
         return null;
     }
 
-    public void applyTripPriceReference(String id, JSONObject response) throws Exception {
-        TripSummary current = summary();
-        if (current == null || !id.equals(current.data.getString("intervalId"))
+    public JSONArray tripHistory() {
+        // shortcut: only this device's history is available until an installation-authenticated list API exists.
+        JSONArray result = new JSONArray();
+        try {
+            JSONArray visible = TripHistory.visible(new JSONArray(store.getString("history", "[]")), verifiedOwner());
+            for (int i = 0; i < visible.length(); i++) result.put(withEv(visible.getJSONObject(i)));
+        } catch (Exception error) { storageError = "운행 목록 확인 실패 · 기존 기록 보존 중"; }
+        return result;
+    }
+
+    public void refreshTripHistory() {
+        if (sync == null || verifiedOwner().isEmpty()) return;
+        JSONArray history = tripHistory();
+        try {
+            for (int i = 0; i < history.length(); i++) {
+                JSONObject entry = history.getJSONObject(i);
+                sync.refreshSummary(entry.getString("intervalId"), entry.optString("candidateId"));
+            }
+        } catch (Exception error) { storageError = "운행 목록 갱신 요청 저장 실패 · 기존 기록 보존 중"; }
+    }
+
+    public boolean tripCostBusy(String id) { return tripCosts.busy(id); }
+
+    public TripSummary completedTrip(String id) {
+        JSONArray history=tripHistory();
+        for(int i=0;i<history.length();i++) {
+            JSONObject data=history.optJSONObject(i);
+            if(data!=null && id.equals(data.optString("intervalId"))) return new TripSummary(data);
+        }
+        return null;
+    }
+
+    public void refreshTripCost() {
+        TripSummary current=summary();
+        if(current!=null && !current.data.optBoolean("chargingOnly")) tripCosts.refresh(current.data);
+    }
+
+    public void confirmTripCost() {
+        TripSummary current=summary();
+        if(current!=null) confirmTripCost(current.data.optString("intervalId"));
+    }
+
+    public void confirmTripCost(String id) {
+        TripSummary current=completedTrip(id);
+        if(current!=null && !current.data.has("savedEvCost")) tripCosts.prepare(current.data,false);
+    }
+
+    public void tripCostStatus(String id,String status) {
+        try {
+            JSONObject energy=evIntervals.optJSONObject(id);
+            if(energy==null || !verifiedOwner().equals(energy.optString("owner")) || energy.has("savedEvCost")) return;
+            energy.put("evCostStatus",status);evStore.write(evIntervals.toString());changed.run();
+        } catch(Exception error) {storageError="전력비 확인 상태 저장 실패";}
+    }
+
+    public void applySavedTripCost(String id,JSONObject response) throws Exception {
+        JSONObject energy=evIntervals.optJSONObject(id);
+        if(energy==null || verifiedOwner().isEmpty() || !verifiedOwner().equals(energy.optString("owner"))
                 || !id.equals(response.getString("tripId")) || !verifiedOwner().equals(response.getString("owner")))
-            throw new IllegalArgumentException("Trip reference scope mismatch");
-        java.time.Instant.parse(response.getString("fetchedAt"));
-        JSONObject energy = evIntervals.optJSONObject(id);
-        if (energy == null) throw new IllegalStateException("Battery recording unavailable");
-        energy.put("currentPriceReference", response);
-        evStore.write(evIntervals.toString());
-        changed.run();
+            throw new IllegalArgumentException("Trip cost scope mismatch");
+        if(energy.has("savedEvCost")) return;
+        String status=response.getString("status");
+        if("SAVED".equals(status)) {
+            JSONObject cost=response.getJSONObject("cost");
+            if(!TripSummary.validSavedCost(cost)) throw new IllegalArgumentException("Invalid saved trip cost");
+            energy.put("savedEvCost",new JSONObject(cost.toString()));
+        }
+        energy.put("evCostStatus",status);evStore.write(evIntervals.toString());changed.run();
     }
 
     public JSONObject serverSummary(String id) { return sync == null ? null : sync.summary(id); }
@@ -589,6 +651,7 @@ public final class HomeRecorder {
     // 8. 이탈·연결 해제: 수집을 중단하고 원래 사용자 기록을 보존한다.
     public void pause() {
         visibleLocations.clear();
+        tripCosts.close();
         visible = false;
         gearGeneration++; gearPending = false; endAtPark = false; finishAfterEv = false;
         evSource = null;
@@ -608,6 +671,7 @@ public final class HomeRecorder {
     }
 
     public void clearPersonalCache() {
+        tripCosts.close();
         visibleLocations.clear();
         stationEnrichment.close();
         chargeEnrichment.close();
@@ -623,6 +687,7 @@ public final class HomeRecorder {
     }
 
     public void lockPersonalSession() throws Exception {
+        tripCosts.close();
         stationEnrichment.close();
         chargeEnrichment.close();
         interruptEv();

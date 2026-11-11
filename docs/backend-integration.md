@@ -69,6 +69,9 @@ Swagger에는 C01~C04와 기존 페어링/일부 모바일 API만 있다. C05~C0
 
 ## 모바일 측 연결
 
+차량 앱의 운행 목록·단건 요약 재조회·인원별 비용 계산과 목록 API의 범위는
+[운행 목록 연결](trip-history-integration.md)을 참조하세요.
+
 이 저장소는 차량 장치 앱이다. 별도 모바일 앱에는 다음 흐름이 필요하다.
 
 - 신규 설치 QR → Supabase 로그인 → `pairing-requests/preview` → `pairing-requests/{id}/intent`(기존 차량 또는 새 차량 이름) → 차량 화면에서 확인 코드 비교 후 `confirm`.

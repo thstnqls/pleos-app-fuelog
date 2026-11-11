@@ -24,6 +24,54 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class InstallationFlowAndroidTest {
+    @Test public void renameStoresServerConfirmedNameAndKeepsItOnHttpFailure() throws Exception {
+        try (PendingConnection fixture = new PendingConnection()) {
+            fixture.session.vehicleAlias = "기존 차량";
+            fixture.server.enqueue(json(200, new JSONObject().put("vehicle_name", "가족 차")));
+            CountDownLatch saved = new CountDownLatch(1);
+            fixture.session.renameVehicleAlias("가족 차", new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) { saved.countDown(); }
+                public void onHttpError(ApiClient.ApiResponse response) { fail("Unexpected HTTP error"); }
+                public void onFailure(java.io.IOException failure) { fail(failure.getMessage()); }
+            });
+            assertTrue(saved.await(5, TimeUnit.SECONDS));
+            var request = fixture.server.takeRequest(5, TimeUnit.SECONDS);
+            assertEquals("PUT", request.getMethod());
+            assertEquals("/vehicle/name", request.getPath());
+            assertEquals("가족 차", new JSONObject(request.getBody().readUtf8()).getString("vehicle_name"));
+            assertEquals("가족 차", fixture.session.vehicleAlias);
+            fixture.server.enqueue(new MockResponse().setResponseCode(403));
+            CountDownLatch rejected = new CountDownLatch(1);
+            fixture.session.renameVehicleAlias("실패할 이름", new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) { fail("Unexpected success"); }
+                public void onHttpError(ApiClient.ApiResponse response) { rejected.countDown(); }
+                public void onFailure(java.io.IOException failure) { fail(failure.getMessage()); }
+            });
+            assertTrue(rejected.await(5, TimeUnit.SECONDS));
+            assertEquals("가족 차", fixture.session.vehicleAlias);
+        }
+    }
+
+    @Test public void remoteDisconnectClearsPersonalSessionAndReturnsToQrSetup() throws Exception {
+        try (PendingConnection fixture = new PendingConnection()) {
+            fixture.session.linked = true;
+            fixture.session.vehicleAlias = "차량";
+            fixture.session.authenticatedSubject = UUID.randomUUID().toString();
+            fixture.session.home = new JSONObject().put("private", true);
+            fixture.server.enqueue(json(200, new JSONObject().put("installation_id", fixture.installationId)
+                    .put("paired", false)));
+            CountDownLatch changed = new CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> fixture.session.refreshIdentity(changed::countDown));
+            assertTrue(changed.await(5, TimeUnit.SECONDS));
+            assertFalse(fixture.session.linked);
+            assertEquals("", fixture.session.authenticatedSubject);
+            assertEquals("", fixture.session.payload);
+            assertEquals("차량", fixture.session.vehicleAlias);
+            assertEquals(0, fixture.session.home.length());
+            assertEquals("/installations/me", fixture.server.takeRequest(5, TimeUnit.SECONDS).getPath());
+        }
+    }
+
     @Test public void completedRequestIsReadEvenAfterLocalQrDeadline() throws Exception {
         try (PendingConnection fixture = new PendingConnection()) {
             java.lang.reflect.Field deadline = ConnectionSession.class.getDeclaredField("deadline");
@@ -97,11 +145,16 @@ public class InstallationFlowAndroidTest {
             server.start();
             server.enqueue(json(201, new JSONObject().put("installation_id", installationId).put("installation_secret", secret)));
             JSONObject me = new JSONObject().put("installation_id", installationId).put("paired", false);
-            server.enqueue(json(200, me)); server.enqueue(new MockResponse().setResponseCode(404));
+            server.enqueue(json(200, me));
             server.enqueue(json(201, new JSONObject().put("id", requestId).put("expires_at", expires)
                     .put("qr", new JSONObject().put("v", 1).put("type", "fuelog.vehicle_pairing").put("request_id", requestId).put("proof", "temporary-proof"))));
             ApiClient api = new ApiClient(server.url("/").toString());
             ConnectionSession session = new ConnectionSession(isolated, api);
+            session.refresh(true, () -> {});
+            session.retry(() -> {});
+            assertEquals(0, server.getRequestCount());
+            assertThrows(Exception.class, () -> session.setVehicleAlias("   "));
+            session.setVehicleAlias("  출퇴근 차량  ");
             CountDownLatch waiting = new CountDownLatch(1);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> session.refresh(true, () -> { if (session.state.equals("WAITING")) waiting.countDown(); }));
             assertTrue(waiting.await(10, TimeUnit.SECONDS));
@@ -112,9 +165,9 @@ public class InstallationFlowAndroidTest {
             assertEquals(android.os.Build.MODEL, installationBody.getString("device_alias"));
             assertEquals(1, installationBody.length());
             assertEquals("/installations/me", server.takeRequest(5, TimeUnit.SECONDS).getPath());
-            assertEquals("/pairing-requests/current", server.takeRequest(5, TimeUnit.SECONDS).getPath());
             RecordedRequest qr = server.takeRequest(5, TimeUnit.SECONDS);
             assertEquals("/pairing-requests", qr.getPath());
+            assertEquals("출퇴근 차량", new JSONObject(qr.getBody().readUtf8()).getString("vehicle_name"));
             assertEquals(installationId, qr.getHeader("X-Installation-Id"));
             assertEquals(secret, qr.getHeader("X-Installation-Secret")); assertNull(qr.getHeader("Authorization"));
             assertNotNull(qr.getHeader("Idempotency-Key")); assertFalse(session.payload.contains(secret));
@@ -136,13 +189,17 @@ public class InstallationFlowAndroidTest {
             server.enqueue(json(200, new JSONObject(me.toString()).put("paired", true)
                     .put("authenticated_user_id", pairedUser).put("authenticated_user_name", "Paired driver")));
             ConnectionSession restored = new ConnectionSession(isolated, api);
+            assertEquals("출퇴근 차량", restored.vehicleAlias);
+            restored.setVehicleAlias("수정한 차량");
+            restored.registrationReset();
+            assertEquals("수정한 차량", new ConnectionSession(isolated, api).vehicleAlias);
             CountDownLatch restoredLatch = new CountDownLatch(1);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> restored.refresh(true, restoredLatch::countDown));
             assertTrue(restoredLatch.await(10, TimeUnit.SECONDS)); assertTrue(restored.linked);
             assertEquals(pairedUser, restored.authenticatedSubject);
             assertEquals("Paired driver", restored.authenticatedName);
             assertEquals("/installations/me", server.takeRequest(5, TimeUnit.SECONDS).getPath());
-            assertEquals(7, server.getRequestCount());
+            assertEquals(6, server.getRequestCount());
         } finally {
             File[] files = directory.listFiles();
             if (files != null) for (File entry : files) Files.deleteIfExists(entry.toPath());

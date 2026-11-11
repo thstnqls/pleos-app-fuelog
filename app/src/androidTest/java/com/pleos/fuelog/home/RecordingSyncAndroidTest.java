@@ -17,6 +17,46 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class RecordingSyncAndroidTest {
+    @Test public void historyRefreshUsesServerIdAndDeduplicatesPendingReads() throws Exception {
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File directory = new File(target.getCacheDir(), "history-refresh-" + UUID.randomUUID());
+        assertTrue(directory.mkdirs());
+        Context isolated = new ContextWrapper(target) { @Override public File getNoBackupFilesDir() { return directory; } };
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            String id = UUID.randomUUID().toString();
+            File file = new File(directory, "recording-outbox.bin");
+            new EncryptedJsonStore(file).write(new JSONObject().put("jobs", new JSONArray()).put("intervals", new JSONObject()
+                    .put("local-history", new JSONObject().put("id", id).put("ended", true))
+                    .put("active", new JSONObject().put("id", UUID.randomUUID().toString()))).toString());
+            server.enqueue(new okhttp3.mockwebserver.MockResponse().setBody(new JSONObject().put("tripId", id)
+                    .put("distanceKm", new JSONObject().put("value", 60).put("status", "available")).toString()));
+            var constructor = ConnectionSession.class.getDeclaredConstructor(Context.class, com.pleos.fuelog.api.ApiClient.class);
+            constructor.setAccessible(true);
+            ConnectionSession connection = constructor.newInstance(isolated, new com.pleos.fuelog.api.ApiClient(server.url("/").toString()));
+            connection.linked = true;
+            RecordingSync sync = new RecordingSync(isolated, connection);
+            sync.refreshSummary("missing", ""); sync.refreshSummary("active", "");
+            assertEquals(0, sync.pendingCount());
+            sync.refreshSummary("local-history", "candidate-history");
+            sync.refreshSummary("local-history", "candidate-history");
+            assertEquals(1, sync.pendingCount());
+            var done = new java.util.concurrent.CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> sync.resume(() -> { if (sync.pendingCount() == 0) done.countDown(); }));
+            assertTrue(done.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            var request = server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(request);
+            assertEquals("GET", request.getMethod());
+            assertEquals("/recording-intervals/" + id + "/summary", request.getPath());
+            assertEquals("candidate-history", request.getHeader("X-Trip-User-Candidate"));
+            assertEquals(60, TripHistory.metric(sync.summary("local-history"), "distanceKm"), 0);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(sync::pause);
+        } finally {
+            File[] files = directory.listFiles(); if (files != null) for (File entry : files) Files.deleteIfExists(entry.toPath());
+            Files.deleteIfExists(directory.toPath());
+        }
+    }
+
     @Test public void rejectedLegacyDistanceIsRetriedWithSameBatchAndSequence() throws Exception {
         Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File directory = new File(target.getCacheDir(), "repair-outbox-" + UUID.randomUUID());

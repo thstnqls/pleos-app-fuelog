@@ -44,39 +44,19 @@ public class EvRecordingTest {
         assertTrue(Double.isNaN(new TripSummary(ev.snapshot()).consumedKwh()));
     }
 
-    @Test public void confirmedPriceIsFrozenForSameUserAndProducesTripCost() throws Exception {
-        JSONObject scenario = new JSONObject().put("averageWonPerKwh", 350)
-                .put("stations", new org.json.JSONArray().put(new JSONObject()).put(new JSONObject()));
-        JSONObject charge = new JSONObject().put("id", "price-ref").put("status", "CONFIRMED")
-                .put("endAt", 500).put("syncedEndAt", 500).put("scenarios", new org.json.JSONArray().put(scenario));
-        JSONObject intervals = new JSONObject().put("old", new JSONObject().put("owner", "owner-a")
-                .put("chargeCandidates", new org.json.JSONArray().put(charge)));
-        EvRecording ev = new EvRecording();
-        ev.setPriceReference(intervals, "owner-b", 1000);
-        assertFalse(ev.snapshot().has("chargePriceValid"));
-        ev.setPriceReference(intervals, "owner-a", 1000);
-        scenario.put("averageWonPerKwh", 999);
-        ev.sample(false, 40, "WH", 1000); ev.sample(false, 36, "WH", 2000);
-        JSONObject data = ev.snapshot().put("distanceKm", 60).put("distanceValid", true);
-        assertEquals(1400, new TripSummary(data).evCost(), 0);
-        JSONObject upload = RecordingPayloads.upload(data.put("intervalId", "trip").put("startedAt", 1000).put("endedAt", 2000));
-        assertEquals(350, upload.getDouble("unitPrice"), 0);
-        assertTrue(upload.getBoolean("priceValid"));
-        ev.reset();
-        charge.put("status", "REJECTED");
-        ev.setPriceReference(intervals, "owner-a", 1000);
-        assertFalse(ev.snapshot().has("chargePriceScenarios"));
-    }
-
-    @Test public void currentReferenceCostUsesOnlyComparableRatesAndValidConsumption() throws Exception {
-        JSONObject data = new JSONObject().put("evEndpointsValid", true).put("consumedKwh", 4);
-        JSONObject scenario = new JSONObject().put("averageWonPerKwh", 350)
-                .put("stations", new org.json.JSONArray().put(new JSONObject()).put(new JSONObject()));
-        TripSummary summary = new TripSummary(data);
-        assertEquals(1400, summary.referenceCost(scenario), 0);
-        assertTrue(Double.isNaN(summary.referenceCost(new JSONObject().put("averageWonPerKwh", 350))));
-        data.put("evMissing", true);
-        assertTrue(Double.isNaN(summary.referenceCost(scenario)));
+    @Test public void costIsVisibleOnlyFromAValidSavedSnapshot() throws Exception {
+        JSONObject data=new JSONObject().put("evEndpointsValid",true).put("consumedKwh",4)
+                .put("chargePriceValid",true).put("chargeUnitPriceWonPerKwh",350).put("chargePriceSource","old-reference");
+        TripSummary summary=new TripSummary(data);
+        assertTrue(Double.isNaN(summary.evCost()));
+        JSONObject cost=new JSONObject().put("amount",1320).put("currency","KRW").put("averageWonPerKwh",330).put("consumedKwh",4)
+                .put("tariffDate","2026-11-09").put("calculatedAt","2026-11-11T00:00:00Z").put("basis","SLOW_THREE_OPERATOR_MEAN").put("sourceCount",3);
+        data.put("savedEvCost",cost);
+        assertEquals(1320,summary.evCost(),0);
+        cost.put("sourceCount",2);
+        assertTrue(Double.isNaN(summary.evCost()));
+        cost.put("sourceCount",3).put("amount",-1);
+        assertTrue(Double.isNaN(summary.evCost()));
     }
 
     @Test public void whPreferredAndPercentFallbackNeedsCapacity() {

@@ -41,6 +41,7 @@ public final class ConnectionSession {
     public JSONObject syncStatus = new JSONObject(), queueStatus = new JSONObject();
     public Runnable onPersonalInvalid = () -> {};
     public String installationId = "";
+    public String vehicleAlias = "";
 
     // 1. 앱 진입: 설치 인증과 진행 중인 차량 연결 요청을 복원한다.
     public static synchronized ConnectionSession get(Context context) {
@@ -59,6 +60,7 @@ public final class ConnectionSession {
                     : new JSONObject(new String(new AtomicFile(previous).readFully(), StandardCharsets.UTF_8));
             credential = saved.optString("credential");
             installationId = saved.optString("installationId");
+            vehicleAlias = saved.optString("vehicleAlias");
             operation = saved.optString("operation", UUID.randomUUID().toString());
             requestId = saved.optString("requestId"); payload = saved.optString("payload");
             persist();
@@ -90,13 +92,47 @@ public final class ConnectionSession {
         if (state.equals("WAITING") && remaining() == 0) {
             state = "EXPIRED"; payload = ""; changed.run(); return;
         }
+        if (vehicleAlias.isBlank()) return;
         if (credential.isEmpty()) { issueInstallation(changed); return; }
         if (state.equals("IDLE")) send("connection/requests", changed);
         else if (state.equals("WAITING")) send("connection/requests/status", changed);
     }
 
+    public void setVehicleAlias(String value) throws Exception {
+        if (busy) throw new IllegalStateException("Connection request in progress");
+        String alias = value.trim();
+        if (alias.isEmpty() || alias.length() > 100) throw new IllegalArgumentException();
+        String previous = vehicleAlias;
+        vehicleAlias = alias;
+        try { persist(); } catch (Exception failure) { vehicleAlias = previous; throw failure; }
+    }
+
+    public void renameVehicleAlias(String value, ApiClient.ResultCallback callback) throws Exception {
+        String alias = value.trim();
+        if (busy || api == null || alias.isEmpty() || alias.length() > 100) throw new IllegalArgumentException();
+        busy = true;
+        try {
+            api.request("PUT", "vehicle/name", new JSONObject().put("vehicle_name", alias).toString(), credential, null,
+                    new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
+                    busy = false;
+                    try {
+                        String name = new JSONObject(response.getBody()).getString("vehicle_name");
+                        setVehicleAlias(name);
+                        vehicleName = name;
+                        home.put("vehicleAlias", name);
+                        callback.onSuccess(response);
+                    } catch (Exception failure) { callback.onFailure(new IOException("차량 이름 저장 확인 실패", failure)); }
+                }); }
+                public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> { busy = false; callback.onHttpError(response); }); }
+                public void onFailure(IOException failure) { main.post(() -> { busy = false; callback.onFailure(failure); }); }
+            });
+        } catch (Exception failure) { busy = false; throw failure; }
+    }
+
     public void retry(Runnable changed) {
         if (busy || api == null) return;
+        if (vehicleAlias.isBlank()) return;
         if (credential.isEmpty()) { issueInstallation(changed); return; }
         if (usesIssuedInstallation()) { refreshPairing(true, changed); return; }
         if (state.equals("EXPIRED") || state.equals("REVOKED")) {
@@ -158,12 +194,15 @@ public final class ConnectionSession {
     public long remaining() { return Math.max(0, (deadline - SystemClock.elapsedRealtime() + 999) / 1000); }
 
     private void pairingRequest(String method, String path, JSONObject body, Runnable changed) {
-        busy = true;
         Map<String, String> headers = new HashMap<>(installationHeaders());
         if (path.equals("pairing-requests") && method.equals("POST")) {
+            if (vehicleAlias.isBlank()) return;
+            try { body = new JSONObject().put("vehicle_name", vehicleAlias); }
+            catch (JSONException invalid) { connectionFailed("차량 별칭을 확인해 주세요", changed); return; }
             headers.put("Idempotency-Key", operation);
             try { persist(); } catch (Exception error) { connectionFailed("QR 재시도 키 저장 실패", changed); return; }
         }
+        busy = true;
         api.request(method, path, method.equals("POST") ? body == null ? "" : body.toString() : null,
                 null, headers, new ApiClient.ResultCallback() {
             public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
@@ -174,9 +213,11 @@ public final class ConnectionSession {
                     if (path.equals("installations/me")) {
                         if (!installationId.equals(value.getString("installation_id"))) throw new IllegalArgumentException();
                         restored = true;
+                        boolean wasLinked = linked;
                         linked = value.getBoolean("paired");
                         vehicleId = value.isNull("vehicle_id") ? "" : UUID.fromString(value.getString("vehicle_id")).toString();
                         vehicleName = value.optString("vehicle_name", "등록된 차량");
+                        if (linked && !value.isNull("vehicle_name") && value.has("vehicle_name") && !vehicleName.isBlank() && !vehicleName.equals(vehicleAlias)) setVehicleAlias(vehicleName);
                         String previousSubject = authenticatedSubject;
                         authenticatedSubject = linked && !value.isNull("authenticated_user_id")
                                 ? UUID.fromString(value.getString("authenticated_user_id")).toString() : "";
@@ -186,7 +227,16 @@ public final class ConnectionSession {
                         }
                         authenticatedName = authenticatedSubject.isEmpty() ? "" : value.optString("authenticated_user_name", "QR 인증 사용자");
                         if (linked) { state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
-                        else { pairingRequest("GET", "pairing-requests/current", null, changed); return; }
+                        else if (wasLinked) {
+                            registrationReset();
+                            onPersonalInvalid.run();
+                            changed.run();
+                            return;
+                        } else {
+                            if (requestId.isEmpty() && !vehicleAlias.isBlank()) pairingRequest("POST", "pairing-requests", null, changed);
+                            else pairingRequest("GET", "pairing-requests/current", null, changed);
+                            return;
+                        }
                     } else if (path.equals("pairing-requests") && method.equals("POST")) {
                         payload = InstallationResponse.qr(value, System.currentTimeMillis());
                         requestId = value.getString("id");
@@ -215,6 +265,11 @@ public final class ConnectionSession {
                         }
                         if (state.equals("WAITING") && payload.isEmpty()) { state = "EXPIRED"; message = "QR 비밀값을 복원할 수 없습니다. 새 코드를 받아 주세요"; }
                         persist();
+                        if (path.equals("pairing-requests/current") && !vehicleAlias.isBlank()
+                                && (state.equals("EXPIRED") || state.equals("REVOKED"))) {
+                            refreshPairing(true, changed);
+                            return;
+                        }
                     }
                     changed.run();
                 } catch (Exception error) { api.status.invalid(method, path); connectionFailed("차량 연결 응답 확인 필요", changed); }
@@ -348,7 +403,7 @@ public final class ConnectionSession {
     // 공통 처리: 설치 인증 저장과 연결 오류 안내.
     private void persist() throws Exception {
         identity.write(new JSONObject().put("credential", credential).put("installationId", installationId)
-                .put("operation", operation).put("requestId", requestId).put("payload", payload).toString());
+                .put("vehicleAlias", vehicleAlias).put("operation", operation).put("requestId", requestId).put("payload", payload).toString());
     }
 
     private Map<String, String> installationHeaders() {

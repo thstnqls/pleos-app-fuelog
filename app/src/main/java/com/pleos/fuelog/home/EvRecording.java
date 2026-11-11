@@ -75,42 +75,6 @@ public final class EvRecording {
         data.put("chargedDuringInterval", true);
     }
 
-    /** Freeze a confirmed, same-user charging reference when the next recording starts. */
-    public void setPriceReference(JSONObject intervals, String owner, long before) throws Exception {
-        if (intervals == null || owner.isEmpty()) return;
-        JSONObject latest = null;
-        java.util.Iterator<String> keys = intervals.keys();
-        while (keys.hasNext()) {
-            JSONObject interval = intervals.optJSONObject(keys.next());
-            if (interval == null || !owner.equals(interval.optString("owner"))) continue;
-            JSONArray charges = interval.optJSONArray("chargeCandidates");
-            if (charges == null) continue;
-            for (int i = 0; i < charges.length(); i++) {
-                JSONObject charge = charges.optJSONObject(i);
-                if (charge == null || !"CONFIRMED".equals(charge.optString("status"))
-                        || charge.optLong("endAt") <= 0 || charge.optLong("endAt") > before
-                        || charge.optLong("syncedEndAt") < charge.optLong("endAt")) continue;
-                JSONArray scenarios = charge.optJSONArray("scenarios");
-                if (scenarios == null || scenarios.length() == 0) continue;
-                if (latest == null || charge.optLong("endAt") > latest.optLong("endAt")) latest = charge;
-            }
-        }
-        if (latest != null) {
-            data.put("chargePriceScenarios", new JSONArray(latest.getJSONArray("scenarios").toString()));
-            data.put("chargePriceSource", "confirmed-charge:" + latest.getString("id"));
-            data.put("chargePriceObservedAt", latest.getLong("endAt"));
-            JSONArray scenarios = data.getJSONArray("chargePriceScenarios");
-            if (scenarios.length() == 1) {
-                JSONObject scenario = scenarios.getJSONObject(0);
-                JSONArray stations = scenario.optJSONArray("stations");
-                double price = scenario.optDouble("averageWonPerKwh", Double.NaN);
-                if (stations != null && stations.length() >= 2 && stations.length() <= 3 && Double.isFinite(price) && price > 0) {
-                    data.put("chargeUnitPriceWonPerKwh", price).put("chargePriceValid", true);
-                }
-            }
-        }
-    }
-
     public static boolean applyResponse(JSONObject entry, JSONObject response) throws Exception {
         if (!entry.getString("id").equals(response.getString("id"))) throw new IllegalArgumentException();
         String status = response.getString("status");

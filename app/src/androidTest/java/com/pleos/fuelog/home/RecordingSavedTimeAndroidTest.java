@@ -22,6 +22,10 @@ public class RecordingSavedTimeAndroidTest {
         Context isolated = new ContextWrapper(target) {
             @Override public File getNoBackupFilesDir() { return directory; }
             @Override public SharedPreferences getSharedPreferences(String name, int mode) { return target.getSharedPreferences(prefix + name, mode); }
+            @Override public int checkSelfPermission(String permission) {
+                return com.pleos.fuelog.location.PleosLocationClient.PERMISSION.equals(permission)
+                        ? android.content.pm.PackageManager.PERMISSION_DENIED : super.checkSelfPermission(permission);
+            }
         };
         var connection = com.pleos.fuelog.connection.ConnectionSession.get(isolated);
         String previous = connection.authenticatedSubject;
@@ -46,25 +50,43 @@ public class RecordingSavedTimeAndroidTest {
                     assertEquals(60, result.data.getDouble("distanceKm"), 0);
                     assertEquals(4, result.consumedKwh(), 0);
                     assertEquals(15, result.evEconomy(), 0);
-                    assertEquals(1400, result.evCost(), 0);
+                    assertTrue(Double.isNaN(result.evCost()));
                     String id = result.data.getString("intervalId");
                     recorder.rememberLocation(id, "metrics-owner", "CURRENT_REFERENCE", 37.5, 127.1, 1000);
                     assertEquals(37.5, recorder.visibleLocation(id).getDouble("latitude"), 0);
                     assertThrows(IllegalArgumentException.class, () -> recorder.rememberLocation(id, "other", "CURRENT_REFERENCE", 37.5, 127.1, 1000));
                     assertThrows(IllegalArgumentException.class, () -> recorder.rememberLocation(id, "metrics-owner", "CURRENT_REFERENCE", Double.NaN, 127.1, 1000));
-                    var reference = new org.json.JSONObject().put("tripId", id).put("owner", "metrics-owner")
-                            .put("fetchedAt", java.time.Instant.now().toString()).put("scenarios", new org.json.JSONArray());
-                    recorder.applyTripPriceReference(id, reference);
-                    assertNotNull(recorder.summary().data.optJSONObject("currentPriceReference"));
-                    assertThrows(IllegalArgumentException.class, () -> recorder.applyTripPriceReference(id, new org.json.JSONObject(reference.toString()).put("owner", "other")));
+                    recorder.endForSwitch();
+                    assertFalse(recorder.trip.active);
+                    assertEquals(1,new org.json.JSONArray(isolated.getSharedPreferences("home_recording",Context.MODE_PRIVATE).getString("history","[]")).length());
+                    assertEquals("LOCATION_REQUIRED",recorder.summary().data.getString("evCostStatus"));
+                    assertEquals(60,recorder.summary().data.getDouble("distanceKm"),0);
+                    assertTrue(Double.isNaN(recorder.summary().evCost()));
+                    assertFalse(RecordingPayloads.upload(recorder.summary().data).getBoolean("priceValid"));
+                    var cost=new org.json.JSONObject().put("amount",1320).put("currency","KRW").put("averageWonPerKwh",330).put("consumedKwh",4)
+                            .put("tariffDate","2026-11-09").put("calculatedAt","2026-11-11T00:00:00Z")
+                            .put("basis","SLOW_THREE_OPERATOR_MEAN").put("sourceCount",3).put("locationBasis","CONFIRMATION");
+                    var saved=new org.json.JSONObject().put("tripId",id).put("owner","metrics-owner").put("status","SAVED").put("cost",cost);
+                    recorder.applySavedTripCost(id,saved);
+                    assertEquals(1320,recorder.summary().evCost(),0);
+                    recorder.applySavedTripCost(id,new org.json.JSONObject(saved.toString()).put("cost",new org.json.JSONObject(cost.toString()).put("amount",9999)));
+                    assertEquals("A saved amount cannot be overwritten",1320,recorder.summary().evCost(),0);
+                    assertThrows(IllegalArgumentException.class,()->recorder.applySavedTripCost(id,new org.json.JSONObject(saved.toString()).put("owner","other")));
                     var syncField = HomeRecorder.class.getDeclaredField("sync"); syncField.setAccessible(true);
                     var stateField = RecordingSync.class.getDeclaredField("state"); stateField.setAccessible(true);
                     var state = (org.json.JSONObject) stateField.get(syncField.get(recorder));
                     state.getJSONObject("intervals").getJSONObject(id).put("summary", new org.json.JSONObject()
                             .put("quality", new org.json.JSONObject().put("missing", true)));
                     assertTrue(Double.isNaN(recorder.summary().consumedKwh()));
+                    assertEquals(1320,recorder.summary().evCost(),0);
                     recorder.pause();
                     assertNull(recorder.visibleLocation(id));
+                    HomeRecorder restored=new HomeRecorder(isolated);
+                    assertEquals(1320,restored.summary().evCost(),0);
+                    assertEquals("2026-11-11T00:00:00Z",restored.summary().data.getJSONObject("savedEvCost").getString("calculatedAt"));
+                    assertEquals(1320,restored.completedTrip(id).evCost(),0);
+                    assertNull(restored.completedTrip("unknown"));
+                    restored.pause();
                 } catch (Exception error) { throw new AssertionError(error); }
             });
         } finally {
