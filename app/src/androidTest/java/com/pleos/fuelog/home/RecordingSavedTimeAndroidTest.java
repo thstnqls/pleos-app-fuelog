@@ -35,6 +35,7 @@ public class RecordingSavedTimeAndroidTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 try {
                     HomeRecorder recorder = new HomeRecorder(isolated);
+                    recorder.attachScreen(()->{});
                     recorder.toggle();
                     assertTrue(recorder.trip.active);
                     recorder.trip.sample(1000, 1000); recorder.trip.sample(1060, 2000);
@@ -115,7 +116,11 @@ public class RecordingSavedTimeAndroidTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 try {
                     HomeRecorder recorder = new HomeRecorder(isolated);
-                    var visible = HomeRecorder.class.getDeclaredField("visible"); visible.setAccessible(true); visible.set(recorder, true);
+                    recorder.attachScreen(()->{});
+                    recorder.resume(()->{});
+                    recorder.detachScreen();
+                    var visible = HomeRecorder.class.getDeclaredField("visible"); visible.setAccessible(true);
+                    assertTrue("Detaching the screen must leave service collection running",visible.getBoolean(recorder));
                     var generation = HomeRecorder.class.getDeclaredField("evGeneration"); generation.setAccessible(true); generation.set(recorder, 1);
                     var accept = HomeRecorder.class.getDeclaredMethod("acceptEv", int.class, String.class, String.class, Boolean.class, double.class, String.class, Runnable.class);
                     accept.setAccessible(true);
@@ -134,6 +139,16 @@ public class RecordingSavedTimeAndroidTest {
                     assertEquals(1, charges.length());
                     assertEquals(3, charges.getJSONObject(0).getDouble("estimatedKwh"), 0);
                     assertEquals(interval, summary.data.getString("intervalId"));
+                    assertNotNull(recorder.completedTrip(interval));
+                    var notice=recorder.pendingChargeNotice();
+                    assertNotNull("A positive switch ON/OFF interval must leave a durable notification",notice);
+                    assertEquals(interval,notice.getString("intervalId"));
+                    recorder.markChargeNotified(notice);
+                    assertNull(recorder.pendingChargeNotice());
+                    HomeRecorder restored=new HomeRecorder(isolated);
+                    assertNull("Already notified charging records must not alert after recreation",restored.pendingChargeNotice());
+                    assertNotNull(restored.completedTrip(interval));
+                    restored.pause();
                     assertEquals(1, new org.json.JSONArray(isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).getString("history", "[]")).length());
                     recorder.toggle();
                     String next = recorder.intervalId;

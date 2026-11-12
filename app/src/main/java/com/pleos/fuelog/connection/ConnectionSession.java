@@ -33,6 +33,11 @@ public final class ConnectionSession {
     private String credential;
     private EncryptedJsonStore identity;
     private boolean restored;
+    private final Context context;
+    private boolean vinChecked, vinReading;
+    private String vin = "", vinSyncedVehicle = "";
+    public String vinStatus = "차량 VIN 확인 중";
+    public String receivedVin = "";
     public String confirmationCode = "", selectedVehicleName = "";
     private final ApiStatus unavailable = new ApiStatus();
     private ApiClient api;
@@ -52,6 +57,8 @@ public final class ConnectionSession {
     private ConnectionSession(Context context) { this(context, null); }
 
     ConnectionSession(Context context, ApiClient supplied) {
+        this.context = context.getApplicationContext();
+        vinChecked = supplied != null;
         try {
             File encrypted = new File(context.getNoBackupFilesDir(), "installation.bin");
             identity = new EncryptedJsonStore(encrypted);
@@ -72,7 +79,40 @@ public final class ConnectionSession {
 
     public void refreshIdentity(Runnable changed) {
         if (busy || api == null || !usesIssuedInstallation()) return;
+        if (!prepareVin(changed)) return;
         pairingRequest("GET", "installations/me", null, changed);
+    }
+
+    public void recheckVin(Runnable changed) {
+        if (vinReading) return;
+        vinChecked = false; vinSyncedVehicle = ""; vinStatus = "차량 VIN 확인 중";
+        prepareVin(changed);
+    }
+
+    private boolean prepareVin(Runnable changed) {
+        if (vinChecked) return true;
+        if (!vinReading) {
+            vinReading = true;
+            com.pleos.fuelog.diagnostics.CarInfoDiagnosticService.readForIdentity(context, (value, status) -> {
+                receivedVin = value; vin = com.pleos.fuelog.diagnostics.CarInfoDiagnosticService.normalizeVin(value); vinChecked = true; vinReading = false;
+                vinStatus = status;
+                changed.run();
+            });
+        }
+        return false;
+    }
+
+    private void syncVin() {
+        if (vin.isEmpty() || vehicleId.isEmpty() || vehicleId.equals(vinSyncedVehicle)) return;
+        vinSyncedVehicle = vehicleId;
+        try {
+            api.request("PUT", "vehicle/vin", new JSONObject().put("vin", vin).toString(), null, installationHeaders(),
+                    new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> vinStatus = "VIN과 기존 차량 연결 확인됨"); }
+                public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> vinStatus = "VIN 연결 확인 실패 · 관리자 연결 또는 서버 배포 확인 필요"); }
+                public void onFailure(IOException failure) { main.post(() -> { vinSyncedVehicle = ""; vinStatus = "VIN 연결 미확인 · 네트워크 확인 필요"; }); }
+            });
+        } catch (Exception failure) { vinSyncedVehicle = ""; vinStatus = "VIN 연결 확인 실패"; }
     }
 
     public boolean hasServer() { return api != null; }
@@ -86,6 +126,7 @@ public final class ConnectionSession {
     // 2. 차량 연결: 설치 등록 → QR 발급·조회 → 차량에서 확인.
     public void refresh(boolean online, Runnable changed) {
         if (!online || busy || api == null || linked) return;
+        if (!prepareVin(changed)) return;
         // Server status wins over the QR countdown, including completion while the screen was away.
         if (usesIssuedInstallation()) { refreshPairing(false, changed); return; }
         if (state.equals("ERROR")) return;
@@ -132,6 +173,7 @@ public final class ConnectionSession {
 
     public void retry(Runnable changed) {
         if (busy || api == null) return;
+        if (!prepareVin(changed)) return;
         if (vehicleAlias.isBlank()) return;
         if (credential.isEmpty()) { issueInstallation(changed); return; }
         if (usesIssuedInstallation()) { refreshPairing(true, changed); return; }
@@ -197,7 +239,7 @@ public final class ConnectionSession {
         Map<String, String> headers = new HashMap<>(installationHeaders());
         if (path.equals("pairing-requests") && method.equals("POST")) {
             if (vehicleAlias.isBlank()) return;
-            try { body = new JSONObject().put("vehicle_name", vehicleAlias); }
+            try { body = new JSONObject().put("vehicle_name", vehicleAlias); if (!vin.isEmpty()) body.put("vin", vin); }
             catch (JSONException invalid) { connectionFailed("차량 별칭을 확인해 주세요", changed); return; }
             headers.put("Idempotency-Key", operation);
             try { persist(); } catch (Exception error) { connectionFailed("QR 재시도 키 저장 실패", changed); return; }
@@ -226,7 +268,7 @@ public final class ConnectionSession {
                             onPersonalInvalid.run();
                         }
                         authenticatedName = authenticatedSubject.isEmpty() ? "" : value.optString("authenticated_user_name", "QR 인증 사용자");
-                        if (linked) { state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
+                        if (linked) { syncVin(); state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
                         else if (wasLinked) {
                             registrationReset();
                             onPersonalInvalid.run();

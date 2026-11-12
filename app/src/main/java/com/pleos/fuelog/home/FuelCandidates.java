@@ -50,6 +50,16 @@ public final class FuelCandidates {
         }
         return null;
     }
+    public JSONArray history(String owner) throws Exception {
+        JSONArray result = new JSONArray();
+        if (owner.isEmpty()) return result;
+        JSONArray entries = state.optJSONArray("entries");
+        if (entries != null) for (int i = entries.length() - 1; i >= 0; i--) {
+            JSONObject entry = entries.getJSONObject(i);
+            if (owner.equals(entry.optString("owner"))) result.put(new JSONObject(entry.toString()));
+        }
+        return result;
+    }
     public void queue(String id, String owner) throws Exception {
         JSONObject entry = find(id, owner);
         if (entry == null) throw new IllegalArgumentException();

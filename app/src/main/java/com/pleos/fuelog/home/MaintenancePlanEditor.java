@@ -1,6 +1,11 @@
 package com.pleos.fuelog.home;
 
 import android.text.InputType;
+import android.graphics.Typeface;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputLayout;
+import com.google.android.material.textfield.TextInputEditText;
+import com.pleos.fuelog.R;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
@@ -28,6 +33,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
     private final BooleanSupplier allowed;
     private final Runnable saved;
     private AlertDialog dialog;
+    private android.app.DatePickerDialog datePicker;
     private okhttp3.Call call;
     private TextView formError;
     private boolean closed;
@@ -41,10 +47,11 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         request("GET", "maintenance/plans", null, "", response -> {
             formError = null;
             JSONArray items = response.getJSONArray("items");
+            if(items.length()==0) { form(new JSONObject()); return; }
             String[] choices = new String[items.length() + 1];
             choices[0] = "새 교체주기 등록";
             for (int i = 0; i < items.length(); i++) choices[i + 1] = items.getJSONObject(i).getString("name");
-            dialog = new AlertDialog.Builder(activity).setTitle("차량 교체주기 관리")
+            dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle("차량 교체주기 관리")
                     .setItems(choices, (d, which) -> {
                         if (!active()) return;
                         try { form(which == 0 ? new JSONObject() : items.getJSONObject(which - 1)); }
@@ -53,24 +60,54 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         });
     }
 
+    public void edit(String id) {
+        if(!active()) return;
+        request("GET","maintenance/plans",null,"",response->{
+            JSONArray items=response.getJSONArray("items");
+            for(int i=0;i<items.length();i++) {
+                JSONObject item=items.getJSONObject(i);
+                if(id.equals(item.optString("id"))) {form(item);return;}
+            }
+            error("정비 항목을 새로 확인해 주세요");
+        });
+    }
+
+    public void create() {
+        try {form(new JSONObject());} catch(Exception invalid) {error("정비 등록 화면을 열지 못했습니다");}
+    }
+
     private void form(JSONObject item) throws Exception {
         if (!active()) return;
+        if("MANUFACTURER".equals(item.optString("basis")) && (item.optJSONObject("evidence")==null || !item.getJSONObject("evidence").optBoolean("verified"))) {
+            dialog=new MaterialAlertDialogBuilder(activity,R.style.ThemeOverlay_Fuelog_Dialog).setTitle("제조사 근거 확인 필요")
+                    .setMessage("기존 등록 항목은 목록에서 확인할 수 있습니다. 제조사 자료가 검증되기 전에는 이 항목을 변경할 수 없습니다.")
+                    .setPositiveButton("확인",null).show();return;
+        }
         String id = item.optString("id", UUID.randomUUID().toString());
         long revision = item.optLong("revision");
         String operation = "vehicle-maintenance:" + UUID.randomUUID();
         LinearLayout fields = new LinearLayout(activity);
         fields.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * activity.getResources().getDisplayMetrics().density);
+        int pad = dp(24);
         fields.setPadding(pad, pad, pad, pad);
-        EditText name = field(fields, "정비 항목", text(item, "name"), InputType.TYPE_CLASS_TEXT);
-        EditText km = field(fields, "교체주기 km · 선택", text(item, "intervalKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText months = field(fields, "교체주기 개월 · 선택", text(item, "intervalMonths"), InputType.TYPE_CLASS_NUMBER);
-        EditText date = field(fields, "마지막 교체일 · YYYY-MM-DD · 선택", text(item, "lastServiceDate"), InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_DATE);
-        EditText lastKm = field(fields, "마지막 교체 당시 누적거리 km · 선택", text(item, "lastServiceKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        heading(fields,"정비 항목");
+        EditText name = field(fields, "항목명", text(item, "name"), InputType.TYPE_CLASS_TEXT);
+        heading(fields,"교체주기");
+        EditText km = field(fields, "거리 주기 (km)", text(item, "intervalKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText months = field(fields, "기간 주기 (개월)", text(item, "intervalMonths"), InputType.TYPE_CLASS_NUMBER);
+        heading(fields,"마지막 정비 기록 · 선택");
+        EditText date = field(fields, "마지막 교체일", text(item, "lastServiceDate"), InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_DATE);
+        EditText lastKm = field(fields, "교체 당시 누적거리 (km)", text(item, "lastServiceKm"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         TextView note = new TextView(activity);
-        note.setTextSize(22);
-        note.setText("거리·기간 중 하나 이상을 입력해 주세요. D-day는 마지막 교체일과 기간 주기로 계산합니다. 과거 교체 이력 보정은 모바일에서 진행하며, 저장한 주기는 차량 설정으로 표시됩니다.");
+        note.setTextSize(20);
+        note.setTextColor(activity.getColor(R.color.car_muted));
+        note.setText("거리 또는 기간 중 하나 이상을 입력해 주세요. 마지막 교체일과 기간을 입력하면 남은 일수를 보여드립니다.");
         fields.addView(note);
+        boolean manufacturer="MANUFACTURER".equals(item.optString("basis"));
+        if(manufacturer) {
+            name.setEnabled(false);km.setEnabled(false);months.setEnabled(false);
+            note.setText("제조사 권장 주기는 유지됩니다. 마지막 교체 기록을 입력하거나 교체 완료를 확인해 주세요.");
+        }
         if (revision > 0) {
             Button complete = new Button(activity);
             complete.setText("교체 완료 확인");
@@ -85,12 +122,12 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         formError = failure;
         fields.addView(failure);
         ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity).setTitle("차량 교체주기 설정").setView(scroll)
+        AlertDialog.Builder builder = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle(revision>0 ? "정비 주기 수정" : "사용자 정비 등록").setView(scroll)
                 .setNegativeButton("취소", null).setPositiveButton("저장", null);
         if (revision > 0) builder.setNeutralButton("주기 삭제", (d, which) -> {
             if (!active()) return;
             formError = null;
-            dialog = new AlertDialog.Builder(activity).setTitle("교체주기를 삭제할까요?")
+            dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle("교체주기를 삭제할까요?")
                     .setMessage("기존 정비 이력은 보존합니다.").setNegativeButton("취소", null)
                     .setPositiveButton("삭제", (confirm, button) -> request("DELETE", "maintenance/plans/" + id, null,
                             Long.toString(revision), result -> completed())).show();
@@ -102,6 +139,8 @@ public final class MaintenancePlanEditor implements AutoCloseable {
             try {
                 JSONObject body = body(name.getText().toString(), km.getText().toString(), months.getText().toString(),
                         date.getText().toString(), lastKm.getText().toString(), operation);
+                if(manufacturer) body.getJSONObject("plan").put("basis","MANUFACTURER")
+                        .put("evidenceId",item.getJSONObject("evidence").getString("id"));
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                 dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
                 if (dialog.getButton(AlertDialog.BUTTON_NEUTRAL) != null) dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setEnabled(false);
@@ -117,7 +156,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         if (dialog != null) dialog.dismiss();
         LinearLayout fields = new LinearLayout(activity);
         fields.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * activity.getResources().getDisplayMetrics().density);
+        int pad = dp(24);
         fields.setPadding(pad, pad, pad, pad);
         TextView note = new TextView(activity);
         note.setTextSize(22);
@@ -134,7 +173,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
         String key = UUID.randomUUID().toString();
         JSONObject[] submitted = {null};
-        dialog = new AlertDialog.Builder(activity).setTitle(item.optString("name") + " · 교체 완료")
+        dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle(item.optString("name") + " · 교체 완료")
                 .setView(scroll).setNegativeButton("취소", null).setPositiveButton("완료 확인", null).create();
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -193,14 +232,41 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         if (value.signum() < 0 || value.scale() > 3 || value.precision() - value.scale() > 9) throw new IllegalArgumentException();
         return value;
     }
+    private int dp(int value) {return Math.round(value*activity.getResources().getDisplayMetrics().density);}
+    private void heading(LinearLayout parent,String text) {
+        TextView title=new TextView(activity);title.setText(text);title.setTextSize(24);
+        title.setTypeface(null,Typeface.BOLD);title.setTextColor(activity.getColor(R.color.car_foreground));
+        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);
+        layout.setMargins(0,dp(12),0,dp(16));parent.addView(title,layout);
+    }
     private EditText field(LinearLayout parent, String label, String value, int type) {
-        TextView title = new TextView(activity); title.setText(label); title.setTextSize(24); parent.addView(title);
-        EditText input = new EditText(activity); input.setContentDescription(label); input.setInputType(type);
-        input.setSingleLine(true); input.setText(value); input.setTextSize(26);
+        TextInputLayout box=new TextInputLayout(activity);
+        box.setHint(label);box.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
+        box.setBoxCornerRadii(dp(12),dp(12),dp(12),dp(12));
+        box.setBoxStrokeColor(activity.getColor(R.color.car_link));
+        box.setBoxBackgroundColor(activity.getColor(R.color.car_panel));
+        box.setHintTextAppearance(R.style.TextAppearance_Fuelog_FormHint);
+        TextInputEditText input=new TextInputEditText(box.getContext());input.setContentDescription(label);
+        input.setInputType(type);input.setSingleLine(true);input.setText(value);input.setTextSize(26);
+        input.setTextColor(activity.getColor(R.color.car_foreground));
+        input.setPadding(dp(16),dp(20),dp(16),dp(16));input.setMinHeight(dp(76));
         input.setImeOptions(input.getImeOptions() | EditorInfo.IME_FLAG_NO_FULLSCREEN);
-        input.setHint(label);
-        input.setMinHeight((int) (64 * activity.getResources().getDisplayMetrics().density));
-        parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
+        box.addView(input,new LinearLayout.LayoutParams(-1,-2));
+        if((type & InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_DATETIME) {
+            input.setHint("YYYY-MM-DD");
+            box.setEndIconMode(TextInputLayout.END_ICON_CUSTOM);box.setEndIconDrawable(android.R.drawable.ic_menu_my_calendar);
+            box.setEndIconContentDescription("교체일 달력 열기");
+            box.setEndIconOnClickListener(v->{
+                if(!active()) return;
+                LocalDate selected;
+                try {selected=LocalDate.parse(input.getText().toString());}catch(Exception invalid){selected=LocalDate.now(ZoneId.of("Asia/Seoul"));}
+                datePicker=new android.app.DatePickerDialog(activity,(view,year,month,day)->
+                        input.setText(LocalDate.of(year,month+1,day).toString()),selected.getYear(),selected.getMonthValue()-1,selected.getDayOfMonth());
+                datePicker.getDatePicker().setMaxDate(System.currentTimeMillis());datePicker.show();
+            });
+        }
+        LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);layout.setMargins(0,dp(4),0,dp(20));
+        parent.addView(box,layout);return input;
     }
     private static String text(JSONObject item, String key) { return item.isNull(key) ? "" : item.optString(key, ""); }
     private interface Success { void accept(JSONObject result) throws Exception; }
@@ -238,10 +304,10 @@ public final class MaintenancePlanEditor implements AutoCloseable {
             return;
         }
         if (dialog != null) dialog.dismiss();
-        dialog = new AlertDialog.Builder(activity).setTitle("정비 정보 확인").setMessage(message)
+        dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle("정비 정보 확인").setMessage(message)
                 .setPositiveButton("목록 다시 확인", (d, which) -> show()).setNegativeButton("닫기", null).show();
     }
     private void completed() { close(); saved.run(); }
     private boolean active() { return !closed && allowed.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed(); }
-    @Override public void close() { closed = true; if (call != null) call.cancel(); call = null; if (dialog != null) dialog.dismiss(); dialog = null; }
+    @Override public void close() { closed = true; if(datePicker!=null) datePicker.dismiss();datePicker=null; if (call != null) call.cancel(); call = null; if (dialog != null) dialog.dismiss(); dialog = null; }
 }

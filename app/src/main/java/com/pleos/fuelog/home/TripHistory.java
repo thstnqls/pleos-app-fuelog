@@ -32,6 +32,25 @@ public final class TripHistory {
         return BigDecimal.valueOf(amount).setScale(0, RoundingMode.HALF_UP);
     }
 
+    public static boolean electric(JSONObject data) {
+        return data.optBoolean("evDetected") || !data.has("startFuelLiters");
+    }
+
+    public static double distance(JSONObject data, JSONObject remote) {
+        return remote != null ? metric(remote, "distanceKm") : data.optBoolean("distanceValid")
+                ? data.optDouble("distanceKm", Double.NaN) : Double.NaN;
+    }
+
+    public static double amount(JSONObject data, JSONObject remote) {
+        TripSummary local = new TripSummary(data);
+        if (electric(data) && TripSummary.validSavedCost(data.optJSONObject("savedEvCost"))) return local.evCost();
+        JSONObject money = remote == null ? null : remote.optJSONObject("estimatedCost");
+        String currency = remote == null ? electric(data) ? "KRW" : data.optString("currency")
+                : money == null ? "" : money.optString("currency");
+        if (!"KRW".equals(currency)) return Double.NaN;
+        return remote != null ? metric(remote, "estimatedCost") : electric(data) ? local.evCost() : local.fuelCost();
+    }
+
     /** The first element is each share; the second is the number who pay one extra won. */
     public static BigDecimal[] splitWon(double amount, int people) {
         if (people < 1) throw new IllegalArgumentException("At least one person required");

@@ -3,6 +3,17 @@ import org.junit.Test;
 import org.json.JSONObject;
 import static org.junit.Assert.*;
 public class FuelCandidatesTest {
+    @Test public void historyIsOwnerScopedNewestFirstAndDetached() throws Exception {
+        FuelCandidates store = new FuelCandidates("{\"entries\":[{\"id\":\"1\",\"owner\":\"a\",\"status\":\"CONFIRMED\"},"
+                + "{\"id\":\"2\",\"owner\":\"b\"},{\"id\":\"3\",\"owner\":\"a\",\"status\":\"REJECTED\"}]}");
+        var history = store.history("a");
+        assertEquals(2, history.length());
+        assertEquals("3", history.getJSONObject(0).getString("id"));
+        assertEquals("1", history.getJSONObject(1).getString("id"));
+        history.getJSONObject(0).put("status", "CONFIRMED");
+        assertEquals("REJECTED", store.latest("a").getString("status"));
+        assertEquals(0, store.history("").length());
+    }
     @Test public void repeatedIncreaseKeepsOneIdAcrossRestore() throws Exception {
         FuelCandidates store = new FuelCandidates("{}");
         store.sample(30, 1000, "a", "trip"); store.sample(35, 2000, "a", "trip");

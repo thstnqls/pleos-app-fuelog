@@ -32,7 +32,9 @@ public final class TripSummary {
         if(cost==null) return false;
         try {
             double amount=cost.getDouble("amount"),rate=cost.getDouble("averageWonPerKwh"),energy=cost.getDouble("consumedKwh");
-            boolean basis="SLOW_THREE_OPERATOR_MEAN".equals(cost.getString("basis")) && cost.getInt("sourceCount")==3
+            int count=cost.getInt("sourceCount");
+            boolean basis="SLOW_OPERATOR_MEAN".equals(cost.getString("basis")) && count>=1 && count<=3
+                    || "SLOW_THREE_OPERATOR_MEAN".equals(cost.getString("basis")) && count==3
                     || "LEGACY_SAVED_ESTIMATE".equals(cost.getString("basis"));
             java.time.LocalDate.parse(cost.getString("tariffDate"));java.time.Instant.parse(cost.getString("calculatedAt"));
             return basis && "KRW".equals(cost.getString("currency")) && Double.isFinite(amount) && amount>=0

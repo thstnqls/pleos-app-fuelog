@@ -337,7 +337,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         fields.setVisibility(View.GONE);
         body.addView(fields);
         action(fields, "VIN 조회 · 끝 4자리", () -> carInfo.readVin());
-        addRow(fields, "vehicle.vin", "VIN · 끝 4자리", "Pleos · getVINInfo");
+        addRow(fields, "vehicle.vin", "VIN · 수신값", "Pleos · getVINInfo");
     }
 
     private void readLocation(boolean current) {

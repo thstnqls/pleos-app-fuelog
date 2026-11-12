@@ -15,7 +15,7 @@ import kotlin.Unit;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Foreground-only MVP collector. Stopped screens create an explicit gap. */
+/** Vehicle collector owned by RecordingService; UI listeners may detach independently. */
 public final class HomeRecorder {
     private static HomeRecorder instance;
     public final TripState trip = new TripState();
@@ -46,6 +46,12 @@ public final class HomeRecorder {
     private int gearGeneration;
     private int generation;
     private Runnable changed = () -> {};
+    private Runnable screenChanged = () -> {};
+    private boolean screenVisible, parked;
+    private long gearAt;
+    public void attachScreen(Runnable listener) { screenVisible=true; screenChanged=listener; }
+    public void detachScreen() { screenVisible=false; screenChanged=()->{}; visibleLocations.clear(); stationEnrichment.close(); chargeEnrichment.close(); tripCosts.close(); }
+    public boolean parked() { return parked && System.currentTimeMillis()-gearAt<10000; }
     private final Runnable tick = new Runnable() {
         public void run() {
             if (!visible) return;
@@ -130,11 +136,12 @@ public final class HomeRecorder {
         try { vehicle = new Vehicle(context.getApplicationContext()); vehicle.initialize(); } catch (RuntimeException ignored) { vehicle = null; }
     }
 
-    // 2. 화면 복귀: 수집과 서버 동기화를 재개한다.
+    // 2. 서비스 시작: 수집과 서버 동기화를 재개한다.
     public void resume(Runnable listener) {
-        changed = listener;
+        changed = () -> { listener.run(); screenChanged.run(); };
+        if (visible) return;
         visible = true;
-        if (sync != null) sync.resume(listener);
+        if (sync != null) sync.resume(changed);
         tick.run();
     }
 
@@ -191,7 +198,7 @@ public final class HomeRecorder {
         trip.sampledAt = 0;
         trip.sampleCount = 0;
         save();
-        tripCosts.prepare(withEv(ended), true);
+        if(screenVisible) tripCosts.prepare(withEv(ended), true);
     }
 
     // 4. 사용자 유지: 서버에서 확인한 페어링 사용자만 적용하고 기존 구간의 소유자는 바꾸지 않는다.
@@ -242,6 +249,7 @@ public final class HomeRecorder {
             if (request != gearGeneration) return;
             gearGeneration++;
             gearPending = false;
+            parked=false;
             trip.interrupt();
         };
         handler.postDelayed(timeout, 10000);
@@ -249,6 +257,7 @@ public final class HomeRecorder {
             if (!visible || request != gearGeneration) return;
             handler.removeCallbacks(timeout);
             gearPending = false;
+            parked="P".equals(gear); gearAt=System.currentTimeMillis();
             if (verifiedOwner().isEmpty()) return;
             if (trip.shouldStart(gear)) toggle();
             endAtPark = trip.shouldEnd(gear);
@@ -301,7 +310,7 @@ public final class HomeRecorder {
                         JSONObject before = fuelCandidates.latest(subject);
                         fuelCandidates.sample(value, System.currentTimeMillis(), subject, interval); saveFuel();
                         JSONObject after = fuelCandidates.latest(subject);
-                        stationEnrichment.observe(after, after != null && (before == null
+                        if(screenVisible) stationEnrichment.observe(after, after != null && (before == null
                                 || !before.optString("id").equals(after.optString("id"))));
                     }
                     catch (Exception e) { storageError = "연료 증가 감지 저장 실패"; }
@@ -442,7 +451,7 @@ public final class HomeRecorder {
             JSONObject prior = latestCharge(ev.snapshot());
             ev.sample(on, kwh, basis, System.currentTimeMillis());
             JSONObject latest = latestCharge(ev.snapshot());
-            if (latest != null) {
+            if (latest != null && screenVisible) {
                 chargeEnrichment.observe(latest, prior == null || !prior.optString("id").equals(latest.optString("id")));
             }
             saveEv();
@@ -555,10 +564,54 @@ public final class HomeRecorder {
         } catch (Exception error) { storageError = "운행 목록 갱신 요청 저장 실패 · 기존 기록 보존 중"; }
     }
 
+    private JSONArray completedRecords() {
+        JSONArray result=new JSONArray();
+        if(verifiedOwner().isEmpty()) return result;
+        try {
+            JSONArray history=new JSONArray(store.getString("history","[]"));
+            for(int i=history.length()-1;i>=0;i--) {
+                JSONObject item=history.getJSONObject(i);
+                if(verifiedOwner().equals(item.optString("owner"))) result.put(withEv(item));
+            }
+        } catch(Exception error) {storageError="완료 기록 복원 실패";}
+        return result;
+    }
+
+    public JSONObject pendingChargeNotice() {
+        JSONArray history=completedRecords();
+        for(int i=0;i<history.length();i++) {
+            JSONObject record=history.optJSONObject(i);
+            JSONArray entries=record==null?null:record.optJSONArray("chargeCandidates");
+            if(entries==null) continue;
+            for(int j=0;j<entries.length();j++) {
+                JSONObject entry=entries.optJSONObject(j);
+                long ended=entry==null?0:entry.optLong("switchEndedAt");
+                long age=System.currentTimeMillis()-ended;
+                if(ended>0 && age>=0 && age<600000 && !entry.optBoolean("noticeSent")
+                        && entry.optDouble("estimatedKwh")>0 && !"REJECTED".equals(entry.optString("status"))) {
+                    try {return new JSONObject().put("intervalId",record.getString("intervalId")).put("candidateId",entry.getString("id"));}
+                    catch(Exception invalid) {return null;}
+                }
+            }
+        }
+        return null;
+    }
+
+    public void markChargeNotified(JSONObject notice) throws Exception {
+        JSONObject energy=evIntervals.getJSONObject(notice.getString("intervalId"));
+        if(!verifiedOwner().equals(energy.optString("owner"))) return;
+        JSONArray entries=energy.getJSONArray("chargeCandidates");
+        for(int i=0;i<entries.length();i++) {
+            JSONObject entry=entries.getJSONObject(i);
+            if(notice.getString("candidateId").equals(entry.optString("id"))) entry.put("noticeSent",true);
+        }
+        evStore.write(evIntervals.toString());
+    }
+
     public boolean tripCostBusy(String id) { return tripCosts.busy(id); }
 
     public TripSummary completedTrip(String id) {
-        JSONArray history=tripHistory();
+        JSONArray history=completedRecords();
         for(int i=0;i<history.length();i++) {
             JSONObject data=history.optJSONObject(i);
             if(data!=null && id.equals(data.optString("intervalId"))) return new TripSummary(data);
@@ -611,8 +664,8 @@ public final class HomeRecorder {
     public String syncMessage() { return sync == null ? storageError : sync.message; }
 
     public void enqueueMobile(String id) throws Exception {
-        TripSummary summary = summary();
-        if (summary == null || !id.equals(summary.data.getString("intervalId")) || trip.active)
+        TripSummary summary = completedTrip(id);
+        if (summary == null)
             throw new IllegalStateException();
         if (summary.data.optString("owner").isEmpty() || sync == null) throw new IllegalStateException("Authenticated owner required");
         sync.deliver(id, summary.data.getString("candidateId"));
@@ -635,6 +688,11 @@ public final class HomeRecorder {
         catch (Exception e) { return null; }
     }
 
+    public JSONArray fuelHistory() {
+        try { return fuelCandidates == null ? new JSONArray() : fuelCandidates.history(verifiedOwner()); }
+        catch (Exception error) { storageError = "주유 목록 확인 실패 · 기존 기록 보존 중"; return new JSONArray(); }
+    }
+
     public void queueFuel(String id) throws Exception {
         if (sync == null) throw new IOException();
         JSONObject candidate = fuelCandidate();
@@ -648,11 +706,11 @@ public final class HomeRecorder {
         fuelCandidates.applyServer(response, id, subject); saveFuel();
     }
 
-    // 8. 이탈·연결 해제: 수집을 중단하고 원래 사용자 기록을 보존한다.
+    // 8. 서비스 종료·연결 해제: 원래 사용자 기록을 보존한다.
     public void pause() {
         visibleLocations.clear();
         tripCosts.close();
-        visible = false;
+        visible = false; parked=false;
         gearGeneration++; gearPending = false; endAtPark = false; finishAfterEv = false;
         evSource = null;
         stationEnrichment.close();

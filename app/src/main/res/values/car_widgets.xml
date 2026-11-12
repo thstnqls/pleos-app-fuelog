@@ -1,4 +1,8 @@
 <resources>
+    <style name="TextAppearance.Fuelog.FormHint" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:textSize">20sp</item>
+        <item name="android:textColor">@color/car_muted</item>
+    </style>
     <style name="Widget.Fuelog.Tabs" parent="Widget.MaterialComponents.TabLayout">
         <item name="tabTextAppearance">@style/TextAppearance.Fuelog.Tab</item>
         <item name="android:minHeight">72dp</item>

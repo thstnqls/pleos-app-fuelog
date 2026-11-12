@@ -19,7 +19,7 @@
 4. 연료 비율·EV 충전율·거리 변경 구독을 각각 시작한 뒤 Virtual Console에서 해당 값을 바꿔 이벤트 수신을 확인한다.
 5. `차량 · 위치` 탭에서 `현재 위도·경도 조회` 또는 `마지막 위치 조회`를 누른다. 위치 권한 승인 후 같은 버튼을 다시 누른다.
    현재 위치는 요청 이후 측정된 업데이트 1건을 최대 10초 기다리며 수신/종료 후 리스너와 SDK를 해제한다.
-   VIN은 `VIN 조회 펼치기`에서 별도로 조회하며 끝 4자리만 표시한다.
+   VIN은 `VIN 조회 펼치기`에서 별도로 조회하며 SDK 수신 문자열 전체를 표시한다.
    [위도·경도 API 사용법과 검증](pleos-location-api.md).
 
 ### Fuel.kt 전체 getter와 AAOS 표준 비교
@@ -131,7 +131,7 @@ Manifest에서 `android.car`를 optional로 선언하여 설치 시 필수 라�
 | `OdometerDiagnosticService` | `checkCurrentDistanceDrivenCapabilities` → `getCurrentDistanceDriven` | `Float?`, 누적 주행거리 km |
 | 동일 | `getTripCumulativeDrivingDistance` 직접 호출 | `Float?`, Trip 누적 주행거리 m. capability 사전 조회를 생략하는 진단용 호출이며, getter의 값/null/실패 응답을 그대로 구분하여 표시한다. |
 | 동일 | `registerDistanceDriven` / `unregisterDistanceDriven` | km. 다른 Trip 거리 리스너의 m 단위와 혼동하지 않는다. |
-| `CarInfoDiagnosticService` | `checkVINInfoCapabilities` → `getVINInfo` | 문자열, 끝 4자리 마스킹. 차량 소유자 인증으로 사용하지 않는다. |
+| `CarInfoDiagnosticService` | `checkVINInfoCapabilities` → `getVINInfo` | 문자열, SDK 수신값 전체 표시. 차량 소유자 인증으로 사용하지 않는다. |
 | `LocationDiagnosticService` / `PleosLocationClient` | 권한·`isSupported` → `initialize` → `getLastKnownLocation` 또는 `registerFusedLocationCallback` → 해제 / `release` | 위·경도 typed callback. 현재 위치 업데이트 1건과 마지막 저장 위치를 구분하며 원 timestamp·고도·방향·confidence도 전달. confidence를 정확도 m로 해석하지 않는다. |
 | `AaosVehicleDiagnosticService` | property config/access 확인 → `getProperty` | FUEL_LEVEL / INFO_FUEL_CAPACITY: mL, PERF_ODOMETER: km. status와 부팅 후 센서 timestamp(ns) 확인. Pleos 값과 합산/이어붙이기하지 않는다. |
 | 동일 | `Car.createCar` 생명주기, `CarUxRestrictionsManager` 현재값/리스너 | 서비스 준비·단절·UX 제한 변화를 화면에 반영 |

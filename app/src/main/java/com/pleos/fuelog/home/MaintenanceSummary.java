@@ -30,7 +30,7 @@ public final class MaintenanceSummary {
         JSONArray list = response.optJSONArray("items");
         if (list == null) throw new JSONException("items missing");
         List<Item> parsed = new ArrayList<>();
-        for (int i = 0; i < Math.min(2, list.length()); i++) {
+        for (int i = 0; i < list.length(); i++) {
             parsed.add(new Item(list.getJSONObject(i)));
         }
         items = Collections.unmodifiableList(parsed);
@@ -42,17 +42,20 @@ public final class MaintenanceSummary {
     }
 
     public static final class Item {
-        public final String name;
+        public final String id, name;
         public final LocalDate lastDate, nextDate;
         public final Double lastKm, nextKm;
         public final Double intervalKm;
         public final Integer intervalMonths;
-        public final String basis;
+        public final String basis, basisCode;
         public final String riskLevel;
+        public final boolean manufacturerEvidenceVerified;
 
         private Item(JSONObject value) throws JSONException {
+            id=value.optString("id");
             name = value.getString("name").trim();
             riskLevel = value.optString("riskLevel", "UNKNOWN");
+            manufacturerEvidenceVerified=value.optBoolean("manufacturerEvidenceVerified");
             if (name.isEmpty()) throw new JSONException("item name missing");
             lastDate = date(value, "lastServiceDate");
             nextDate = date(value, "nextDueDate");
@@ -67,6 +70,7 @@ public final class MaintenanceSummary {
                 intervalMonths = (int) months;
             } else intervalMonths = null;
             String source = value.optString("basis");
+            basisCode=source;
             basis = source.equals("USER") ? "차량 설정" : source.equals("MANUFACTURER")
                     ? "제조사 기준" : "기준 확인 필요";
         }
@@ -88,6 +92,7 @@ public final class MaintenanceSummary {
         }
 
         public String status(MaintenanceSummary summary, LocalDate today, long now) {
+            if("MANUFACTURER".equals(basisCode) && !manufacturerEvidenceVerified) return "제조사 근거 미확인 · 등록된 주기를 참고용으로 표시합니다";
             if ("DANGER".equals(riskLevel)) return "위험 · 설정한 교체 주기의 150% 이상 경과";
             Double distance = kmUntil(summary, now);
             boolean dateDue = daysUntil(today) <= 0;

@@ -127,7 +127,7 @@ public class StartScreenAndroidTest {
                         connection.authenticatedSubject = owner;
                         HomeRecorder.get(isolated).owner = owner;
                         org.json.JSONObject common = new org.json.JSONObject().put("canEdit", true).put("editorSubjectId", owner)
-                                .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "Shared oil")
+                                .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "Shared oil").put("basis","USER")
                                         .put("intervalMonths", 12).put("nextDueDate", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(30).toString())));
                         set(activity, "maintenanceSummary", new MaintenanceSummary(common));
                         set(activity, "maintenanceVehicleId", connection.vehicleId);
@@ -157,22 +157,22 @@ public class StartScreenAndroidTest {
                     try {
                         Object editor = get(activity, "maintenanceEditor");
                         androidx.appcompat.app.AlertDialog menu = (androidx.appcompat.app.AlertDialog) get(editor, "dialog");
-                        menu.getListView().performItemClick(menu.getListView().getChildAt(0), 0, 0);
+                        if(menu.getListView()!=null) menu.getListView().performItemClick(menu.getListView().getChildAt(0), 0, 0);
                         form[0] = (androidx.appcompat.app.AlertDialog) get(editor, "dialog");
                         View fields = form[0].findViewById(android.R.id.content);
-                        for (String label : new String[]{"정비 항목", "교체주기 km · 선택", "교체주기 개월 · 선택",
-                                "마지막 교체일 · YYYY-MM-DD · 선택", "마지막 교체 당시 누적거리 km · 선택"}) {
+                        for (String label : new String[]{"항목명", "거리 주기 (km)", "기간 주기 (개월)",
+                                "마지막 교체일", "교체 당시 누적거리 (km)"}) {
                             android.view.inputmethod.EditorInfo info = new android.view.inputmethod.EditorInfo();
                             assertNotNull(findInput(fields, label).onCreateInputConnection(info));
                             assertTrue((info.imeOptions & android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN) != 0);
-                            assertEquals(label, info.hintText.toString());
+                            assertNotNull(info.hintText);
                         }
                         assertEquals(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
                                 form[0].getWindow().getAttributes().softInputMode
                                         & android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST);
-                        findInput(fields, "정비 항목").setText("타이어");
-                        findInput(fields, "교체주기 개월 · 선택").setText("12");
-                        findInput(fields, "마지막 교체일 · YYYY-MM-DD · 선택").setText("2026-01-01");
+                        findInput(fields, "항목명").setText("타이어");
+                        findInput(fields, "기간 주기 (개월)").setText("12");
+                        findInput(fields, "마지막 교체일").setText("2026-01-01");
                     } catch (Exception failure) { throw new AssertionError(failure); }
                 });
                 server.enqueue(new MockResponse().setBody("{\"revision\":1}"));

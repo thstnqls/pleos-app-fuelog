@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
@@ -28,6 +31,10 @@
         tools:targetApi="31">
         <uses-library android:name="android.car" android:required="false" />
         <uses-library android:name="ai.pleos.playground.car" android:required="false" />
+        <service android:name=".home.RecordingService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled vehicle trip and charging ledger observation using approved vehicle APIs while the app screen is hidden; no background location collection." />
+        </service>
         <activity
             android:name=".DiagnosticActivity"
             android:exported="false" />

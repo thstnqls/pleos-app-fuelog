@@ -51,4 +51,42 @@ QR은 URL이 아닌 JSON 앱 페이로드:
 
 ### 차량 별칭 유지·수정
 
-로컬 `vehicleAlias`는 연결 해제·등록 초기화 후에도 유지한다. 설치 인증과 함께 no-backup 암호화 저장소에 보관하며, 앱 데이터 삭제·재설치 시 사라진다. 저장된 별칭이 있으면 별칭 입력을 생략하고 서버 상태 확인 후 QR을 발급한다. QR 화면과 연결·설정의 '차량 별칭 수정'에서 변경하고 재저장할 수 있다. 연결 전 수정하면 새 별칭으로 QR을 다시 요청한다. 이 수정 기능은 로컬 별칭과 이후 신규 등록 요청의 이름을 변경하며, 기존 서버 차량의 `vehicles.name`을 변경하는 API는 호출하지 않는다.
+로컬 `vehicleAlias`는 연결 해제·등록 초기화 후에도 유지한다. 설치 인증과 함께 no-backup 암호화 저장소에 보관하며, 앱 데이터 삭제·재설치 시 사라진다. 저장된 별칭이 있으면 별칭 입력을 생략하고 서버 상태 확인 후 QR을 발급한다. QR 화면과 연결·설정의 '차량 별칭 수정'에서 변경하고 재저장할 수 있다. 연결 전 수정하면 새 별칭으로 QR을 다시 요청한다. 기존 차량은 설치 Bearer로 `PUT /vehicle/name`에 `{vehicle_name}`을 보내 `vehicles.name`을 변경하고 성공 응답의 이름을 로컬에도 저장한다. 서버가 거부하거나 통신이 실패하면 로컬 이름을 먼저 변경하지 않는다. 오너 인증이 필요하다.
+
+
+모바일 `feature/login_main`의 이름 수정은 JWT로 `PUT /mobile/vehicles/{vehicleId}/name`을 호출하며 OWNER만 가능하다. 모바일 연결 상태 조회의 `vehicleName`과 차량 설치 조회의 `vehicle_name`으로 오래된 이름 캐시를 갱신한다. 완료 페어링 조회도 현재 `vehicles.name`을 반환한다. 새 API 배포가 필요하며 기존 DB 이름은 별칭 수정 후 변경된다.
+
+## VIN 기반 차량 UUID 재사용 (2026-11-12)
+
+앱 업데이트는 기존 설치 인증을 유지한다. 재설치·데이터 삭제로 설치 ID가 새로 만들어진 경우에는 VIN으로 기존 차량을 찾는다. 차량 앱은 Pleos `checkVINInfoCapabilities` 및 `getVINInfo`로 값을 읽고 17자리 VIN 형식을 확인한다. 원문은 메모리와 화면에만 보관하며 QR 페이로드·로그·로컬 저장에 넣지 않는다. 조회 권한 또는 지원 상태가 부족하면 VIN 확인 불가를 표시하고 'VIN 확인·권한 설정'에서 재시도할 수 있다. VIN이 없으면 중복 식별은 보장되지 않으며 기존 설치/모바일의 차량 선택 방식으로 연결한다.
+
+- `POST /pairing-requests`의 선택 필드 `vin`으로 현재 설치의 VIN을 제출한다.
+- 이미 연결된 차량은 설치 헤더 인증으로 `PUT /vehicle/vin`에 `{vin}`을 보내 기존 UUID와 VIN을 먼저 연결한다. 현재 확인된 관리자만 가능하다.
+- `vehicles.vin_hash`는 정규화 VIN의 SHA-256이며 UNIQUE다. `vehicle_installations.vin_hash`는 설치가 제출한 식별값이다. 원본 VIN 컬럼은 없다.
+- 기존 VIN이 발견돼도 자동 로그인하지 않는다. 모바일 관리자 권한 및 QR 확인 완료 후 같은 UUID를 사용하고 이전 설치의 페어링·사용자 접근을 해제한다. VIN 자체는 소유권 또는 실기기 증명이 아니다.
+- 동일 VIN의 동시 등록은 UNIQUE 제약으로 중복 생성을 막는다. 다른 VIN이나 기존 UUID와 충돌하면 거부하며 자동 병합하지 않는다. VIN이 아직 없는 기존 차량은 정상 연결 상태에서 먼저 VIN을 등록해야 재설치 후 찾을 수 있다.
+
+배포 전 백엔드의 `V19__vehicle_vin_identity.sql`을 적용해야 한다. 단위/서버 재설치 시나리오 검증과 실차 VIN 읽기·실제 재설치 검증을 구분한다. 공식 API 페이지는 목록과 제목만 노출되어 서명은 프로젝트 SDK 및 기존 진단 구현으로 확인했다: https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/Vehicle/vehicle/ai.pleos.playground.vehicle.api/car-info/get-v-i-n-info
+
+
+VIN 조회는 기존 `CarInfoDiagnosticService.readVin`을 공통으로 사용한다. 연결 식별은 `readForIdentity`에서 같은 진단 세션의 capability 검사·오류 구분·12초 제한을 재사용한다. 사용자 요청에 따라 진단·QR·연결 설정 화면에 SDK 수신 문자열 전체를 표시한다. 별도 5초 VIN 조회 구현과 OS 권한 사전 차단은 제거했다.
+
+### VIN 실제 응답 확인 (2026-11-12)
+
+연결된 Pleos Connect v2.1.0 에뮬레이터에서 기존 `CarInfoDiagnosticService.readVin`으로 확인한 결과: 수신 성공, null 아님, 문자열 길이 9, trim 후 9, 표준 VIN 형식 검증 실패. VIN 원문·끝자리는 기록하지 않았다. 따라서 이 환경의 UUID 식별 미적용은 조회 실패가 아니라 입력 형식 불일치다. 화면은 수신한 길이와 형식 불일치를 구분해 표시한다. 유효한 17자리 VIN을 제공하는 차량/테스트 환경에서 식별 연동을 검증해야 한다.
+
+
+### getVINInfo 호출 정의 대조 (2026-11-12)
+
+공식 getVINInfo URL은 열렸으나 상세 본문이 텍스트로 노출되지 않았다. 프로젝트에 고정된 Vehicle 2.3.2 sources.jar의 CarInfo.kt/CarInfoImpl.kt와 대조했다. getVINInfo는 INFO_VIN/global/default 값을 nullable String 성공 콜백 또는 Exception 실패 콜백으로 전달하며 CAR_INFO는 normal 권한이다. 현재 VIN 조회는 checkVINInfoCapabilities에서 READ 또는 READ_WRITE가 확인될 때만 getVINInfo를 호출하고 응답을 그대로 표시한다. 일반 권한의 런타임 권한 요청 UI는 제거했다. SDK가 제공하지 않은 VIN을 만들어 내거나 형식 검증 실패값을 차량 매칭에 사용하지 않는다.
+
+### SDK 9자리 식별값 임시 지원 (2026-11-12)
+
+현재 API의 9자리 응답으로 진행하기로 한 사용자 결정에 따라 앱 정규화·서버 DTO·서비스 검증에서 9자리 인쇄 가능한 ASCII 식별값을 추가로 허용한다. 앞뒤 공백 제거 및 대문자 정규화 후 해시로 매칭한다. 17자리 표준 VIN도 계속 지원한다. 9자리 값의 차량별 유일성은 미확인이므로 표준 VIN과 동일한 식별 신뢰도를 주장하지 않는다. 동일값 충돌 시 관리자 권한 검사는 유지하며, 차량 서비스가 표준 VIN을 제공하면 임시 지원 정책을 재검토한다. 기존 V19 해시 컬럼을 사용하므로 추가 스키마 변경은 없다. 서버 배포는 필요하다.
+
+
+### 무효 응답의 식별자 등록 차단
+
+사용자 확인 결과 9자리로 보이던 값은 실제 VIN이 아닌 invalid 표시값이었다. invalid·invaild·undefined·unknown·null·none 등 표시값은 대소문자와 감싼 기호를 무시해 앱·서버에서 식별자로 사용하지 못하도록 차단한다. 화면에는 원문을 계속 표시하되 VIN 미제공 상태로 구분한다. capability 선확인을 복원하며 읽기 불가일 때는 getter를 호출하지 않는다. 유효한 9자리 SDK 식별값 지원은 남아 있으나 무효 표시값은 길이와 무관하게 허용하지 않는다.
+
+capability 선확인 복원 후 Pleos 에뮬레이터 실측: `access=READ`, 성공 콜백 호출, 수신 길이 9, 무효 표시값 판별 true, 정규화 결과 없음. 조회 권한은 있으나 차량 서비스가 유효한 식별값을 제공하지 않는 상태다. 읽기 가능과 유효한 VIN 제공을 별도로 판단한다. 진단 테스트 3개 통과.

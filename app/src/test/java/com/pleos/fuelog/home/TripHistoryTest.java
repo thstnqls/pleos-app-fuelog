@@ -7,6 +7,19 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class TripHistoryTest {
+    @Test public void serverMetricsTakePrecedenceAndUnsupportedCurrencyCannotBeSplit() throws Exception {
+        JSONObject data = new JSONObject().put("distanceValid", true).put("distanceKm", 99)
+                .put("startFuelLiters", 40).put("endFuelLiters", 36).put("fuelEndpointsValid", true)
+                .put("unitPrice", 1700).put("priceSource", "confirmed").put("priceValid", true).put("currency", "KRW");
+        JSONObject remote = new JSONObject().put("distanceKm", new JSONObject().put("status", "unavailable"))
+                .put("estimatedCost", new JSONObject().put("status", "available").put("value", 100).put("currency", "USD"));
+        assertEquals(99, TripHistory.distance(data, null), 0);
+        assertTrue(Double.isNaN(TripHistory.distance(data, remote)));
+        assertEquals(6800, TripHistory.amount(data, null), 0);
+        assertTrue(Double.isNaN(TripHistory.amount(data, remote)));
+        remote.getJSONObject("estimatedCost").put("currency", "KRW");
+        assertEquals(100, TripHistory.amount(data, remote), 0);
+    }
     @Test public void onlyCompletedDrivesOfVerifiedOwnerAreVisibleNewestFirst() throws Exception {
         JSONArray history = new JSONArray()
                 .put(entry("mine", 10, false)).put(entry("other", 20, false))
