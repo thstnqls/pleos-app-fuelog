@@ -527,7 +527,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             LinearLayout qr = pairingCard(layout);
             showQr(qr, connection.payload, "모바일 fuelog 앱으로 스캔할 차량 연결 QR");
             pairingText(qr, "남은 시간 " + connection.remaining() + "초 · 연결 대기 중", 20, R.color.car_mint);
-            LinearLayout steps = section(layout);
+            LinearLayout steps = card(layout);
             paragraph(steps, "1. 휴대폰 fuelog 앱 열기\n2. 차량 등록에서 QR 스캔\n3. 로그인 후 차량 확인");
             tag(steps, "휴대폰 승인 후 차량에서 최종 확인");
         } else {
@@ -569,7 +569,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void renderVehicleOdometer(LinearLayout parent) {
-        LinearLayout current = section(parent);
+        LinearLayout current = card(parent);
         current.setTag("vehicle.odometer");
         subheading(current, "차량 총 누적거리");
         VehicleOdometer reading = vehicleOdometer;
@@ -582,18 +582,6 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
         paragraph(current, reading == null ? vehicleOdometerMessage : reading.readStatus + " · " + reading.subscriptionStatus);
         if (reading != null && reading.observedAt > 0) paragraph(current, "차량에서 수신 · " + timeLabel(reading.observedAt));
-        /*Button refresh = button("누적거리 1회 조회", false, () -> { if (vehicleOdometer != null) vehicleOdometer.read(); });*/
-        /*refresh.setTag("vehicle.odometer.read");
-        refresh.setEnabled(reading != null);
-        current.addView(refresh, fullButton());*/
-        /*Button subscribe = button(reading != null && reading.subscribed() ? "누적거리 구독 중지" : "누적거리 구독 시작", false, () -> {
-            if (vehicleOdometer == null) return;
-            if (vehicleOdometer.subscribed()) vehicleOdometer.stopUpdates();
-            else vehicleOdometer.startUpdates();
-        });
-        subscribe.setTag("vehicle.odometer.subscribe");
-        subscribe.setEnabled(reading != null);
-        current.addView(subscribe, fullButton());*/
         paragraph(current, "사용자 연결·운행 기록과 관계없이 차량에서 직접 읽습니다. 앱 화면을 벗어나면 구독이 중지됩니다.");
     }
 
@@ -1388,7 +1376,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 for(MaintenanceSummary.Item item:summary.items) {
                     if(!basis.equals(item.basisCode)) continue;
                     found=true;
-                    LinearLayout card = section(parent);
+                    LinearLayout card = card(parent);
                     subheading(card, item.name);
                     String cycle = item.intervalKm == null ? "" : maintenanceDistance(item.intervalKm);
                     if (item.intervalMonths != null) cycle += (cycle.isEmpty() ? "" : " 또는 ") + item.intervalMonths + "개월";
@@ -1439,7 +1427,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 if (options == null || options.getChildCount() == 2) {
                     options = new com.pleos.fuelog.ui.AdaptiveRow(this, 400); parent.addView(options, new LinearLayout.LayoutParams(-1, -2));
                 }
-                LinearLayout option=section(options);subheading(option,item.optString("name"));
+                LinearLayout option=card(options);subheading(option,item.optString("name"));
                 LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -2, 1);
                 cell.setMargins(dp(4), 0, dp(4), dp(12)); option.setLayoutParams(cell);
                 String cycle = item.isNull("intervalKm") ? "" : metric(item.optDouble("intervalKm"), " km");
@@ -1462,7 +1450,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             sectionLabel(parent,"정비 완료 기록");
             for(int i=0;i<summary.completedServices.length();i++) {
                 JSONObject item=summary.completedServices.optJSONObject(i);if(item==null) continue;
-                LinearLayout done=section(parent);subheading(done,item.optString("name"));
+                LinearLayout done=card(parent);subheading(done,item.optString("name"));
                 paragraph(done,"완료일 · "+item.optString("serviceDate"));
                 if(!item.isNull("odometerKm")) paragraph(done,"완료 당시 · "+metric(item.optDouble("odometerKm")," km"));
                 paragraph(done,"완료 기록과 다음 정비 계획 저장 완료");
@@ -1770,18 +1758,6 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
     }
 
-    private String featureStatus(String feature) {
-        JSONObject features = settings.snapshot.optJSONObject("features");
-        String value = features == null ? "UNKNOWN" : features.optString(feature);
-        switch (value) {
-            case "AVAILABLE": return "제공 중";
-            case "UNSUPPORTED": return "차량에서 지원하지 않음";
-            case "PERMISSION_REQUIRED": return "권한 필요 · 시스템 설정에서 허용해 주세요";
-            case "TEMPORARY_FAILURE": return "일시적으로 수신 불가 · 잠시 후 다시 확인해 주세요";
-            default: return "미확인 · 연결 후 상태를 확인해 주세요";
-        }
-    }
-
     private void disconnect(String kind) {
         if (!allowed || settings.busy) return;
         new AlertDialog.Builder(this)
@@ -2022,10 +1998,6 @@ public final class CarHomeActivity extends AppCompatActivity {
         return card;
     }
 
-    private LinearLayout section(LinearLayout parent) {
-        return card(parent);
-    }
-
     private LinearLayout pairingCard(LinearLayout parent) {
         LinearLayout pairing = card(parent);
         pairing.setBackground(shape(R.color.car_dark, 20, R.color.car_mint));
@@ -2160,22 +2132,12 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private Button headerAction(String title, Runnable action) {
-        Button button = new Button(this);
-        button.setText(title);
+        Button button = button(title, false, action);
         button.setTextSize(22);
-        button.setAllCaps(false);
-        button.setSingleLine(false);
-        button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(12), dp(8), dp(12), dp(8));
-        button.setMinimumWidth(0);
-        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        button.setElevation(0);
-        button.setStateListAnimator(null);
         button.setTextColor(color(R.color.car_foreground));
         button.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)),
                 shape(R.color.car_panel, 17, R.color.car_line), null));
         button.setMinHeight(dp(58));
-        button.setOnClickListener(v -> action.run());
         return button;
     }
 

@@ -8,12 +8,12 @@ import android.widget.EditText;
 public final class DateInputFormatter implements TextWatcher {
     private final EditText input;
     private boolean changing;
-    private int deletedSeparator = -1;
+    private boolean deletedSeparator;
 
     public DateInputFormatter(EditText input) { this.input = input; }
 
     @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {
-        if (!changing) deletedSeparator = count == 1 && after == 0 && text.charAt(start) == '-' ? start : -1;
+        if (!changing) deletedSeparator = count == 1 && after == 0 && text.charAt(start) == '-';
     }
 
     @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
@@ -31,7 +31,7 @@ public final class DateInputFormatter implements TextWatcher {
             }
         }
         // Backspacing over an automatic separator should also remove the preceding digit.
-        if (deletedSeparator >= 0 && digitsBeforeCursor > 0) {
+        if (deletedSeparator && digitsBeforeCursor > 0) {
             digits.deleteCharAt(--digitsBeforeCursor);
         }
         StringBuilder formatted = new StringBuilder();
