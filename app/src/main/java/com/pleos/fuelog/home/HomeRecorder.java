@@ -211,9 +211,9 @@ public final class HomeRecorder {
             // Even an anonymous interval ends before a new identity can own future records.
             if (trip.active && !subject.equals(owner)) endForSwitch();
             if (!store.edit().putBoolean("privacyLocked", false).commit()) throw new IOException();
+            if (!subject.equals(owner)) candidateId = "";
             owner = subject;
             ownerName = connection.authenticatedName;
-            candidateId = "";
             save(false);
         } catch (Exception error) { storageError = "페어링 사용자 적용 실패 · 기존 기록 보존 중"; }
     }
@@ -575,6 +575,22 @@ public final class HomeRecorder {
             }
         } catch(Exception error) {storageError="완료 기록 복원 실패";}
         return result;
+    }
+
+    public JSONArray chargeHistory() {
+        JSONArray result = new JSONArray();
+        JSONArray records = completedRecords();
+        for (int i = 0; i < records.length(); i++) {
+            JSONObject record = records.optJSONObject(i);
+            JSONArray charges = record == null ? null : record.optJSONArray("chargeCandidates");
+            if (record != null && (record.optBoolean("chargingOnly") || charges != null && charges.length() > 0)) result.put(record);
+        }
+        return result;
+    }
+
+    public boolean electricVehicle() {
+        TripSummary current = summary();
+        return current != null && current.data.optBoolean("evDetected");
     }
 
     public JSONObject pendingChargeNotice() {

@@ -8,7 +8,6 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
-import com.google.android.material.tabs.TabLayout;
 import com.pleos.fuelog.CarHomeActivity;
 import com.pleos.fuelog.api.ApiClient;
 import com.pleos.fuelog.connection.ConnectionSession;
@@ -71,11 +70,29 @@ public class StartScreenAndroidTest {
                         source.read.invoke(12345f);
                         var render = CarHomeActivity.class.getDeclaredMethod("render");
                         render.setAccessible(true); render.invoke(activity);
-                        TabLayout tabs = activity.findViewById(android.R.id.content).findViewWithTag("start.tabs");
-                        assertEquals(2, tabs.getTabCount());
-                        assertEquals("QR 연결", tabs.getTabAt(0).getText());
-                        assertEquals("차량 기본정보", tabs.getTabAt(1).getText());
-                        tabs.selectTab(tabs.getTabAt(1));
+                        View root = activity.findViewById(android.R.id.content);
+                        assertNull(root.findViewWithTag("start.tabs"));
+                        assertNotNull(root.findViewWithTag("start.qr"));
+                        assertNotNull(root.findViewWithTag("start.vehicle"));
+                        assertTrue(contains(root.findViewWithTag("start.qr"), "QR 연결"));
+                        assertTrue(contains(root.findViewWithTag("start.vehicle"), "차량 기본정보"));
+                        android.widget.EditText alias = root.findViewWithTag("pairing.vehicleAlias");
+                        assertNotNull(alias);
+                        alias.requestFocus(); alias.setText("우리 차"); alias.setSelection(1);
+                        render.invoke(activity);
+                        assertSame(alias, root.findViewWithTag("pairing.vehicleAlias"));
+                        assertEquals("우리 차", alias.getText().toString());
+                        assertEquals(1, alias.getSelectionStart());
+                        alias.clearFocus(); render.invoke(activity);
+                        android.widget.EditText restored = root.findViewWithTag("pairing.vehicleAlias");
+                        assertEquals("우리 차", restored.getText().toString());
+                        restored.setText(""); restored.clearFocus();
+                        var subscribe = CarHomeActivity.class.getDeclaredMethod("startVehicleOdometer");
+                        subscribe.setAccessible(true); subscribe.invoke(activity);
+                        var maintenance = CarHomeActivity.class.getDeclaredMethod("loadMaintenance");
+                        maintenance.setAccessible(true);
+                        if (get(activity, "maintenanceCall") == null && get(activity, "maintenanceSummary") == null)
+                            maintenance.invoke(activity);
                     } catch (Exception error) { throw new AssertionError(error); }
                 });
                 assertEquals("/maintenance/summary", server.takeRequest(5, TimeUnit.SECONDS).getPath());
@@ -89,12 +106,15 @@ public class StartScreenAndroidTest {
                 scenario.onActivity(activity -> {
                     View root = activity.findViewById(android.R.id.content);
                     assertTrue(contains(root, "차량 공용 정비 주기"));
+                    android.widget.Button refresh = root.findViewWithTag("maintenance.refresh");
+                    assertEquals("정비 정보 갱신", refresh.getText().toString());
+                    assertFalse(((android.graphics.drawable.AnimatedVectorDrawable) refresh.getCompoundDrawablesRelative()[0]).isRunning());
                     assertNull(root.findViewWithTag("maintenance.manage"));
                     assertTrue(contains(root, "정비 주기 · 10,000 km 또는 12개월"));
                     assertTrue(contains(root, "주기 출처 · 차량 설정"));
                     assertTrue(contains(root, "마지막 정비 기록을 확인해 주세요"));
-                    assertTrue(contains(root, "현재 차량 거리 확인  →"));
-                    assertTrue(contains(root, "현재 배터리 확인  →"));
+                    assertFalse(contains(root, "현재 차량 거리 확인  →"));
+                    assertFalse(contains(root, "현재 배터리 확인  →"));
                     assertTrue(contains(root.findViewWithTag("vehicle.odometer"), "12,345.0 km"));
                     assertEquals("Tab entry must subscribe once", 1, source.registrations);
                     assertNotNull(source.listener);
@@ -110,7 +130,6 @@ public class StartScreenAndroidTest {
                         render.setAccessible(true); render.invoke(activity);
                         View root = activity.findViewById(android.R.id.content);
                         assertTrue(contains(root.findViewWithTag("vehicle.odometer"), "12,345.0 km"));
-                        assertTrue(contains(root, "정비 주기 · 10,000 km 또는 12개월"));
                         assertNull(root.findViewWithTag("maintenance.manage"));
                         assertEquals("Navigation must keep the existing subscription", 1, source.registrations);
                         assertFalse(HomeRecorder.get(isolated).trip.active);
@@ -129,12 +148,28 @@ public class StartScreenAndroidTest {
                         org.json.JSONObject common = new org.json.JSONObject().put("canEdit", true).put("editorSubjectId", owner)
                                 .put("items", new org.json.JSONArray().put(new org.json.JSONObject().put("name", "Shared oil").put("basis","USER")
                                         .put("intervalMonths", 12).put("nextDueDate", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).plusDays(30).toString())));
+                        common.put("manufacturerDefaults",new org.json.JSONArray().put(new org.json.JSONObject()
+                                .put("id","selectable-default").put("name","제조사 기본 필터").put("intervalMonths",12)
+                                .put("evidence",new org.json.JSONObject().put("verified",true).put("model","다른 모델").put("modelYearFrom",2020).put("modelYearTo",2021))));
                         set(activity, "maintenanceSummary", new MaintenanceSummary(common));
                         set(activity, "maintenanceVehicleId", connection.vehicleId);
                         assertEquals(owner, HomeRecorder.get(isolated).verifiedOwner());
+                        set(activity, "page", 4);
                         var render = CarHomeActivity.class.getDeclaredMethod("render"); render.setAccessible(true); render.invoke(activity);
                         View root = activity.findViewById(android.R.id.content);
                         assertTrue(contains(root, "교체 D-30 · 30일 남음"));
+                        assertTrue("Verified documents remain selectable without a matching model/year",
+                                root.findViewWithTag("maintenance.default.select.selectable-default").isEnabled());
+                        assertTrue(root.findViewWithTag("maintenance.default.select.selectable-default").performClick());
+                        Object selectedEditor=get(activity,"maintenanceEditor");
+                        assertTrue(((androidx.appcompat.app.AlertDialog)get(selectedEditor,"dialog")).isShowing());
+                    } catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(activity -> {
+                    try {
+                        View root = activity.findViewById(android.R.id.content);
+                        var closeEditor=CarHomeActivity.class.getDeclaredMethod("closeMaintenanceEditor");closeEditor.setAccessible(true);closeEditor.invoke(activity);
                         assertNotNull(root.findViewWithTag("maintenance.manage"));
                         root.findViewWithTag("maintenance.manage").performClick();
                     } catch (Exception failure) { throw new AssertionError(failure); }
@@ -165,7 +200,7 @@ public class StartScreenAndroidTest {
                             android.view.inputmethod.EditorInfo info = new android.view.inputmethod.EditorInfo();
                             assertNotNull(findInput(fields, label).onCreateInputConnection(info));
                             assertTrue((info.imeOptions & android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN) != 0);
-                            assertNotNull(info.hintText);
+                            assertNull(info.hintText);
                         }
                         assertEquals(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
                                 form[0].getWindow().getAttributes().softInputMode
@@ -240,6 +275,31 @@ public class StartScreenAndroidTest {
                     android.os.SystemClock.sleep(25);
                 }
                 assertEquals(1, completed[0]);
+                String defaultId=UUID.randomUUID().toString();
+                scenario.onActivity(activity->{
+                    try {
+                        completionEditor[0]=new MaintenancePlanEditor(activity,connection,()->true,()->completed[0]++);
+                        completionEditor[0].startManufacturer(new org.json.JSONObject().put("id",defaultId).put("name","제조사 필터")
+                                .put("intervalKm",10000).put("intervalMonths",12).put("evidence",new org.json.JSONObject().put("verified",true)));
+                        form[0]=(androidx.appcompat.app.AlertDialog)get(completionEditor[0],"dialog");
+                        View fields=form[0].findViewById(android.R.id.content);
+                        assertEquals("완료 기록 · 다음 일정 저장",form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).getText().toString());
+                        findInput(fields,"시작일 · 첫 정비 완료일").setText("2026-01-10");
+                        findInput(fields,"교체 당시 누적거리 km · 필수").setText("52000");
+                    }catch(Exception error){throw new AssertionError(error);}
+                });
+                server.enqueue(new MockResponse().setBody("{\"event\":{},\"completedPlan\":{},\"nextPlan\":{\"id\":\"next-default\"}}"));
+                scenario.onActivity(activity->form[0].getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).performClick());
+                var startRequest=server.takeRequest(5,TimeUnit.SECONDS);
+                assertEquals("/maintenance/manufacturer-defaults/"+defaultId+"/start",startRequest.getPath());
+                assertNotNull(startRequest.getHeader("Idempotency-Key"));
+                var baseline=new org.json.JSONObject(startRequest.getBody().readUtf8());
+                assertEquals("2026-01-10",baseline.getString("serviceDate"));assertTrue(baseline.getBoolean("confirmed"));
+                long startDeadline=android.os.SystemClock.elapsedRealtime()+5000;
+                while(completed[0]<2 && android.os.SystemClock.elapsedRealtime()<startDeadline) {
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync();android.os.SystemClock.sleep(25);
+                }
+                assertEquals(2,completed[0]);
                 scenario.onActivity(activity -> {
                     assertFalse(form[0].isShowing());
                     try {
@@ -253,7 +313,8 @@ public class StartScreenAndroidTest {
                         set(activity, "page", 5);
                         var refresh = CarHomeActivity.class.getDeclaredMethod("render"); refresh.setAccessible(true);
                         refresh.invoke(activity);
-                        assertEquals(View.VISIBLE, ((View) get(activity, "headerNavigation")).getVisibility());
+                        assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
+                        assertNotNull(root.findViewWithTag("navigation.5"));
                         isolated.getSharedPreferences("connection_settings", Context.MODE_PRIVATE).edit().putString("pending", "USER").commit();
                         refresh.invoke(activity);
                         assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
@@ -262,7 +323,7 @@ public class StartScreenAndroidTest {
                         connection.registrationReset();
                         var settingsChanged = CarHomeActivity.class.getDeclaredMethod("settingsChanged"); settingsChanged.setAccessible(true); settingsChanged.invoke(activity);
                         assertEquals(6, get(activity, "page"));
-                        assertEquals(0, ((TabLayout) activity.findViewById(android.R.id.content).findViewWithTag("start.tabs")).getSelectedTabPosition());
+                        assertNotNull(activity.findViewById(android.R.id.content).findViewWithTag("start.split"));
                         assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());
                         set(activity, "allowed", false); refresh.invoke(activity);
                         assertEquals(View.GONE, ((View) get(activity, "headerNavigation")).getVisibility());

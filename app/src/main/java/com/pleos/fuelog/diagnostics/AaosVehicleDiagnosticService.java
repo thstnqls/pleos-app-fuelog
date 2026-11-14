@@ -9,8 +9,13 @@ import android.car.hardware.CarPropertyConfig;
 import android.car.hardware.CarPropertyValue;
 import android.car.hardware.property.CarPropertyManager;
 import android.content.Context;
+import android.hardware.display.DisplayManager;
 import android.os.Handler;
+import android.os.Build;
 import android.os.Looper;
+import android.view.Display;
+import android.view.WindowManager;
+import com.pleos.fuelog.BuildConfig;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,7 +32,19 @@ public final class AaosVehicleDiagnosticService {
     private volatile boolean closed;
     private UxObserver observer;
 
-    public AaosVehicleDiagnosticService(Context context) { this.context = context; }
+    public AaosVehicleDiagnosticService(Context context) {
+        Context carContext = context;
+        if (BuildConfig.DEBUG && (Build.HARDWARE.equals("ranchu") || Build.HARDWARE.equals("goldfish"))) {
+            WindowManager windows = context.getSystemService(WindowManager.class);
+            Display display = windows == null ? null : windows.getDefaultDisplay();
+            if (display != null && display.getDisplayId() != Display.DEFAULT_DISPLAY) {
+                Display driver = context.getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY);
+                // shortcut: emulator secondary displays use driver UXR until they receive their own UXR configuration.
+                if (driver != null) carContext = context.createDisplayContext(driver);
+            }
+        }
+        this.context = carContext;
+    }
 
     public void start(UxObserver observer) {
         this.observer = observer;

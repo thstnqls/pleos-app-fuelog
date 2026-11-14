@@ -24,6 +24,67 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class InstallationFlowAndroidTest {
+    @Test public void emailLookupUsesUserIdAndNeverAcceptsAnotherUsersEmail() throws Exception {
+        try (PendingConnection f = new PendingConnection()) {
+            String subject = UUID.randomUUID().toString();
+            f.session.linked = true; f.session.authenticatedSubject = subject;
+            f.server.enqueue(json(200, new JSONObject().put("user_id", subject).put("email", "driver@example.com")));
+            CountDownLatch loaded = new CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> f.session.refreshUserEmail(loaded::countDown));
+            assertTrue(loaded.await(5, TimeUnit.SECONDS));
+            assertEquals("driver@example.com", f.session.authenticatedName);
+            RecordedRequest request = f.server.takeRequest(5, TimeUnit.SECONDS);
+            assertEquals("/installation/users/" + subject, request.getPath());
+            assertEquals("Bearer test-installation-secret", request.getHeader("Authorization"));
+        }
+        try (PendingConnection f = new PendingConnection()) {
+            f.session.linked = true; f.session.authenticatedSubject = UUID.randomUUID().toString();
+            f.server.enqueue(json(200, new JSONObject().put("user_id", UUID.randomUUID().toString()).put("email", "other@example.com")));
+            CountDownLatch rejected = new CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> f.session.refreshUserEmail(rejected::countDown));
+            assertTrue(rejected.await(5, TimeUnit.SECONDS));
+            assertEquals("이메일 확인 불가", f.session.authenticatedName);
+        }
+    }
+
+    @Test public void disconnectDiscardsDelayedEmailLookup() throws Exception {
+        try (PendingConnection f = new PendingConnection()) {
+            String subject = UUID.randomUUID().toString();
+            f.session.linked = true; f.session.authenticatedSubject = subject;
+            f.server.enqueue(json(200, new JSONObject().put("user_id", subject).put("email", "old@example.com"))
+                    .setBodyDelay(300, TimeUnit.MILLISECONDS));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> f.session.refreshUserEmail(() -> {}));
+            assertNotNull(f.server.takeRequest(5, TimeUnit.SECONDS));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> f.session.clearPersonal());
+            SystemClock.sleep(500);
+            assertEquals("", f.session.authenticatedSubject);
+            assertEquals("", f.session.authenticatedName);
+        }
+    }
+
+    @Test public void vehicleLoadingWaitsForIdentityAndVinSyncButNotQrPolling() throws Exception {
+        try(PendingConnection fixture=new PendingConnection()) {
+            var session=fixture.session;
+            var restored=ConnectionSession.class.getDeclaredField("restored");restored.setAccessible(true);restored.setBoolean(session,false);
+            session.state="IDLE";
+            assertTrue(session.checkingVehicle());
+            for(String field:new String[]{"vinReading","vinSyncing","busy"}) {
+                var value=ConnectionSession.class.getDeclaredField(field);value.setAccessible(true);value.setBoolean(session,false);
+            }
+            restored.setBoolean(session,true);
+            assertFalse(session.checkingVehicle());
+            var vinReading=ConnectionSession.class.getDeclaredField("vinReading");vinReading.setAccessible(true);vinReading.setBoolean(session,true);
+            assertTrue(session.checkingVehicle());vinReading.setBoolean(session,false);
+            var sync=ConnectionSession.class.getDeclaredField("vinSyncing");sync.setAccessible(true);sync.setBoolean(session,true);
+            assertTrue(session.checkingVehicle());sync.setBoolean(session,false);
+            session.state="WAITING";
+            var busy=ConnectionSession.class.getDeclaredField("busy");busy.setAccessible(true);busy.setBoolean(session,true);
+            assertFalse("Ordinary QR polls must not cover the QR screen",session.checkingVehicle());
+            busy.setBoolean(session,false);restored.setBoolean(session,false);session.state="ERROR";
+            assertFalse("A failed check must expose recovery controls",session.checkingVehicle());
+        }
+    }
+
     @Test public void renameStoresServerConfirmedNameAndKeepsItOnHttpFailure() throws Exception {
         try (PendingConnection fixture = new PendingConnection()) {
             fixture.session.vehicleAlias = "기존 차량";
@@ -188,6 +249,7 @@ public class InstallationFlowAndroidTest {
             String pairedUser = UUID.randomUUID().toString();
             server.enqueue(json(200, new JSONObject(me.toString()).put("paired", true)
                     .put("authenticated_user_id", pairedUser).put("authenticated_user_name", "Paired driver")));
+            server.enqueue(json(200, new JSONObject().put("user_id", pairedUser).put("email", "driver@example.com")));
             ConnectionSession restored = new ConnectionSession(isolated, api);
             assertEquals("출퇴근 차량", restored.vehicleAlias);
             restored.setVehicleAlias("수정한 차량");
@@ -197,9 +259,12 @@ public class InstallationFlowAndroidTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> restored.refresh(true, restoredLatch::countDown));
             assertTrue(restoredLatch.await(10, TimeUnit.SECONDS)); assertTrue(restored.linked);
             assertEquals(pairedUser, restored.authenticatedSubject);
-            assertEquals("Paired driver", restored.authenticatedName);
             assertEquals("/installations/me", server.takeRequest(5, TimeUnit.SECONDS).getPath());
-            assertEquals(6, server.getRequestCount());
+            assertEquals("/installation/users/" + pairedUser, server.takeRequest(5, TimeUnit.SECONDS).getPath());
+            long waitUntil = SystemClock.elapsedRealtime() + 5000;
+            while (!"driver@example.com".equals(restored.authenticatedName) && SystemClock.elapsedRealtime() < waitUntil) SystemClock.sleep(20);
+            assertEquals("driver@example.com", restored.authenticatedName);
+            assertEquals(7, server.getRequestCount());
         } finally {
             File[] files = directory.listFiles();
             if (files != null) for (File entry : files) Files.deleteIfExists(entry.toPath());

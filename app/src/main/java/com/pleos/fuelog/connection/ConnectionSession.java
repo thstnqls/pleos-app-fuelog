@@ -22,10 +22,14 @@ import org.json.JSONObject;
 
 /** Process-scoped session: rotation never creates a second registration request. */
 public final class ConnectionSession {
+    public final UserNotificationSettings notifications = new UserNotificationSettings(this);
     private static ConnectionSession instance;
     public String state = "IDLE", requestId = "", payload = "", message = "";
     public boolean linked;
     public String authenticatedSubject = "", authenticatedName = "";
+    private okhttp3.Call userEmailCall;
+    private int userEmailGeneration;
+    private long userEmailCheckedAt;
     public String vehicleId = "", vehicleName = "";
     private long deadline;
     private boolean busy;
@@ -34,7 +38,7 @@ public final class ConnectionSession {
     private EncryptedJsonStore identity;
     private boolean restored;
     private final Context context;
-    private boolean vinChecked, vinReading;
+    private boolean vinChecked, vinReading, vinSyncing;
     private String vin = "", vinSyncedVehicle = "";
     public String vinStatus = "차량 VIN 확인 중";
     public String receivedVin = "";
@@ -102,17 +106,30 @@ public final class ConnectionSession {
         return false;
     }
 
-    private void syncVin() {
+    public boolean checkingVehicle() {
+        return vinReading || !vinChecked || vinSyncing
+                || busy && installationId.isEmpty() && (credential == null || credential.isEmpty())
+                || usesIssuedInstallation() && !restored && !state.equals("ERROR");
+    }
+
+    public String vehicleCheckMessage() {
+        if(vinReading || !vinChecked) return "차량 VIN을 읽고 있습니다";
+        if(vinSyncing) return "VIN과 등록된 차량 정보를 확인하고 있습니다";
+        return "저장된 차량 연결 정보를 확인하고 있습니다";
+    }
+
+    private void syncVin(Runnable changed) {
         if (vin.isEmpty() || vehicleId.isEmpty() || vehicleId.equals(vinSyncedVehicle)) return;
         vinSyncedVehicle = vehicleId;
+        vinSyncing = true;
         try {
             api.request("PUT", "vehicle/vin", new JSONObject().put("vin", vin).toString(), null, installationHeaders(),
                     new ApiClient.ResultCallback() {
-                public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> vinStatus = "VIN과 기존 차량 연결 확인됨"); }
-                public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> vinStatus = "VIN 연결 확인 실패 · 관리자 연결 또는 서버 배포 확인 필요"); }
-                public void onFailure(IOException failure) { main.post(() -> { vinSyncedVehicle = ""; vinStatus = "VIN 연결 미확인 · 네트워크 확인 필요"; }); }
+                public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {vinSyncing=false;vinStatus = "VIN과 기존 차량 연결 확인됨";changed.run();}); }
+                public void onHttpError(ApiClient.ApiResponse response) { main.post(() -> {vinSyncing=false;vinStatus = "VIN 연결 확인 실패 · 관리자 연결 또는 서버 배포 확인 필요";changed.run();}); }
+                public void onFailure(IOException failure) { main.post(() -> {vinSyncing=false; vinSyncedVehicle = ""; vinStatus = "VIN 연결 미확인 · 네트워크 확인 필요";changed.run(); }); }
             });
-        } catch (Exception failure) { vinSyncedVehicle = ""; vinStatus = "VIN 연결 확인 실패"; }
+        } catch (Exception failure) {vinSyncing=false; vinSyncedVehicle = ""; vinStatus = "VIN 연결 확인 실패";changed.run(); }
     }
 
     public boolean hasServer() { return api != null; }
@@ -267,8 +284,10 @@ public final class ConnectionSession {
                             home = new JSONObject();
                             onPersonalInvalid.run();
                         }
-                        authenticatedName = authenticatedSubject.isEmpty() ? "" : value.optString("authenticated_user_name", "QR 인증 사용자");
-                        if (linked) { syncVin(); state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
+                        if (!previousSubject.equals(authenticatedSubject) || authenticatedSubject.isEmpty()) resetUserEmail();
+                        if (!authenticatedSubject.isEmpty()) refreshUserEmail(changed);
+                        notifications.refresh(changed);
+                        if (linked) { syncVin(changed); state = "ALREADY_LINKED"; message = "차량 연결 확인됨"; }
                         else if (wasLinked) {
                             registrationReset();
                             onPersonalInvalid.run();
@@ -374,10 +393,49 @@ public final class ConnectionSession {
         } catch (Exception e) { busy = false; state = "ERROR"; message = "연결 요청을 만들지 못했습니다"; changed.run(); }
     }
 
+    private void resetUserEmail() {
+        userEmailGeneration++;
+        if (userEmailCall != null) userEmailCall.cancel();
+        userEmailCall = null;
+        userEmailCheckedAt = 0;
+        authenticatedName = authenticatedSubject.isEmpty() ? "" : "이메일 확인 중";
+    }
+
+    void refreshUserEmail(Runnable changed) {
+        if (!linked || authenticatedSubject.isEmpty() || userEmailCall != null
+                || userEmailCheckedAt > 0 && SystemClock.elapsedRealtime() - userEmailCheckedAt < 60000) return;
+        final String subject = authenticatedSubject;
+        final int version = ++userEmailGeneration;
+        userEmailCheckedAt = SystemClock.elapsedRealtime();
+        userEmailCall = api.request("GET", "installation/users/" + subject, null, credential, null, new ApiClient.ResultCallback() {
+            public void onSuccess(ApiClient.ApiResponse response) { main.post(() -> {
+                if (version != userEmailGeneration || !linked || !subject.equals(authenticatedSubject)) return;
+                userEmailCall = null;
+                try {
+                    JSONObject value = new JSONObject(response.getBody());
+                    if (!subject.equals(value.getString("user_id"))) throw new IllegalArgumentException();
+                    String email = value.isNull("email") ? "" : value.getString("email").trim();
+                    if (email.length() > 320 || email.matches("(?s).*\\p{Cntrl}.*")) throw new IllegalArgumentException();
+                    authenticatedName = email.isEmpty() ? "이메일 미등록" : email;
+                } catch (Exception invalid) { authenticatedName = "이메일 확인 불가"; }
+                changed.run();
+            }); }
+            public void onHttpError(ApiClient.ApiResponse response) { failed(); }
+            public void onFailure(IOException error) { failed(); }
+            private void failed() { main.post(() -> {
+                if (version != userEmailGeneration || !subject.equals(authenticatedSubject)) return;
+                userEmailCall = null;
+                authenticatedName = "이메일 확인 불가";
+                changed.run();
+            }); }
+        });
+    }
+
     // 3. 사용자 연결 해제: 개인 화면 데이터와 인증된 사용자 표시를 지운다.
     public void clearPersonal() {
+        notifications.clear();
         authenticatedSubject = "";
-        authenticatedName = "";
+        resetUserEmail();
         home = new JSONObject();
     }
 

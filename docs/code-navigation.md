@@ -14,7 +14,7 @@
 | 차량 연결 QR 확인·승인 | `renderConnect` | `ConnectionSession.refresh` → `issueInstallation` → `refreshPairing` → `confirmPairing` |
 | 이번 운행 기록 시작 | `renderHome` | `HomeRecorder.toggle` → `RecordingSync.start` |
 | 페어링 사용자 유지 | `renderHome` | `ConnectionSession.refreshIdentity` → `HomeRecorder.reconcileUser` |
-| 연결 없는 공동 정비 조회 | `renderConnect`의 차량 기본정보 탭 | `loadMaintenance` → `ConnectionSession.readMaintenance` |
+| 연결 없는 공동 정비 조회 | `renderConnect` 오른쪽의 `renderBasicVehicleInfo` | `loadMaintenance` → `ConnectionSession.readMaintenance` |
 | 운행 중 거리·연료 수집 | `startLiveRecorder` | `HomeRecorder.resume` → `tick` → `read` / `readFuel` |
 | 운행 기록 종료 | `renderHome` | `HomeRecorder.toggle` → `endForSwitch` → `RecordingSync.finish` |
 | 운행 요약·모바일 전달 | `renderTrip` | `HomeRecorder.summary`, `serverSummary`, `enqueueMobile` → `RecordingSync.deliver` |

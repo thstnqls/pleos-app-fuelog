@@ -72,6 +72,15 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         });
     }
 
+    public void startManufacturer(JSONObject item) {
+        if(!active()) return;
+        try {
+            JSONObject selected=new JSONObject(item.toString()).put("manufacturerDefault",true);
+            if(selected.optJSONObject("evidence")==null || !selected.getJSONObject("evidence").optBoolean("verified")) {error("제조사 자료의 검증 상태를 먼저 확인해 주세요");return;}
+            completion(selected);
+        } catch(Exception invalid) {error("제조사 기본 항목을 확인하지 못했습니다");}
+    }
+
     public void create() {
         try {form(new JSONObject());} catch(Exception invalid) {error("정비 등록 화면을 열지 못했습니다");}
     }
@@ -153,6 +162,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
     }
 
     private void completion(JSONObject item) {
+        boolean starting=item.optBoolean("manufacturerDefault");
         if (dialog != null) dialog.dismiss();
         LinearLayout fields = new LinearLayout(activity);
         fields.setOrientation(LinearLayout.VERTICAL);
@@ -160,9 +170,9 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         fields.setPadding(pad, pad, pad, pad);
         TextView note = new TextView(activity);
         note.setTextSize(22);
-        note.setText("실제로 교체한 경우에만 완료를 확인해 주세요. 다음 예정은 입력한 교체일·거리부터 계산하며, 완료 확인 이력은 수정·삭제할 수 없습니다.");
+        note.setText(starting?"지정한 시작일을 첫 정비 완료일로 기록합니다. 완료 기록과 다음 정비 계획을 함께 저장합니다. 실제 정비를 마친 날짜와 당시 누적거리를 입력해 주세요.":"실제로 교체한 경우에만 완료를 확인해 주세요. 다음 예정은 입력한 교체일·거리부터 계산하며, 완료 확인 이력은 수정·삭제할 수 없습니다.");
         fields.addView(note);
-        EditText date = field(fields, "실제 교체일 · YYYY-MM-DD", "",
+        EditText date = field(fields, starting?"시작일 · 첫 정비 완료일":"실제 교체일 · YYYY-MM-DD", "",
                 InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_DATE);
         EditText km = field(fields, item.isNull("intervalKm") ? "교체 당시 누적거리 km · 선택" : "교체 당시 누적거리 km · 필수", "",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -173,8 +183,8 @@ public final class MaintenancePlanEditor implements AutoCloseable {
         ScrollView scroll = new ScrollView(activity); scroll.addView(fields);
         String key = UUID.randomUUID().toString();
         JSONObject[] submitted = {null};
-        dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle(item.optString("name") + " · 교체 완료")
-                .setView(scroll).setNegativeButton("취소", null).setPositiveButton("완료 확인", null).create();
+        dialog = new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_Fuelog_Dialog).setTitle(item.optString("name") + (starting?" · 정비 시작":" · 교체 완료"))
+                .setView(scroll).setNegativeButton("취소", null).setPositiveButton(starting?"완료 기록 · 다음 일정 저장":"완료 확인", null).create();
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             if (!active() || call != null) return;
@@ -186,8 +196,8 @@ public final class MaintenancePlanEditor implements AutoCloseable {
                 dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
                 dialog.setCancelable(false);
                 failure.setText("완료 확인 중");
-                request("POST", "maintenance/plans/" + item.getString("id") + "/complete", submitted[0],
-                        Long.toString(item.getLong("revision")), key, result -> completed());
+                request("POST", starting?"maintenance/manufacturer-defaults/"+item.getString("id")+"/start":"maintenance/plans/" + item.getString("id") + "/complete", submitted[0],
+                        starting?"":Long.toString(item.getLong("revision")), key, result -> completed());
             } catch (Exception invalid) { failure.setText("실제 교체일과 누적거리를 확인해 주세요. 기존 교체 기록보다 이전 값은 입력할 수 없습니다."); }
         }));
         dialog.show();

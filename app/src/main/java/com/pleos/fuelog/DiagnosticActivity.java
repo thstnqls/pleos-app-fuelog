@@ -27,6 +27,7 @@ import com.pleos.fuelog.diagnostics.FuelDiagnosticService;
 import com.pleos.fuelog.diagnostics.LocationDiagnosticService;
 import com.pleos.fuelog.diagnostics.OdometerDiagnosticService;
 import com.pleos.fuelog.ui.DiagnosticReadingView;
+import com.pleos.fuelog.ui.ConsentDialogs;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.tabs.TabLayout;
@@ -65,6 +66,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     private CarInfoDiagnosticService carInfo;
     private LocationDiagnosticService location;
     private AaosVehicleDiagnosticService aaos;
+    private androidx.appcompat.app.AlertDialog locationConsent;
 
     // 1. 진단 화면 진입: 탭 복원 → 차량 서비스 연결 → 정차 상태 확인.
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -350,7 +352,16 @@ public final class DiagnosticActivity extends AppCompatActivity {
                         .status("미지원", "이 이미지에 FUSED_LOCATION 권한 정의 없음");
                 return;
             }
-            requestPermissions(new String[]{LOCATION_PERMISSION}, 101);
+            if (locationConsent != null) return;
+            locationConsent = ConsentDialogs.builder(this, "차량 위치 읽기",
+                    "사용 목적\n진단 화면에서 차량의 현재 또는 마지막 수신 위치와 측정 시각을 확인합니다. 이 진단 결과는 서버로 전송하지 않습니다.\n\n"
+                    + "다음 시스템 권한 창 안내\nPleos 시스템에서 이 위치 권한을 ‘알 수 없는 정보’로 표시할 수 있습니다. 이 요청은 차량 위치를 읽기 위한 권한입니다.\n\n"
+                    + "선택 권한\n거절하면 위치 조회만 사용할 수 없습니다. 다른 진단 항목에는 영향을 주지 않습니다.")
+                    .setPositiveButton("시스템 권한 확인", (dialog, which) -> {
+                        if (started && allowed) requestPermissions(new String[]{LOCATION_PERMISSION}, 101);
+                    }).setNegativeButton("지금은 사용 안 함", null).create();
+            locationConsent.setOnDismissListener(dialog -> locationConsent = null);
+            ConsentDialogs.show(this, locationConsent);
             return;
         }
         if (current) location.readCurrentLocation(); else location.readLastLocation();
@@ -411,6 +422,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     }
 
     private void closeMeasurements() {
+        if (locationConsent != null) { locationConsent.dismiss(); locationConsent = null; }
         // Invalidate first so callbacks queued by a previous screen cannot repopulate it.
         if (session != null) session.close();
         if (fuel != null) fuel.stopUpdates();

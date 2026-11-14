@@ -33,6 +33,8 @@ public final class CarInfoDiagnosticService extends PleosReadSupport {
     }
     public static String normalizeVin(String value) {
         String vin = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        // shortcut: INVALID is a shared matching key; replace it when real vehicle IDs are available.
+        if (vin.replaceAll("[^A-Z0-9]", "").equals("INVALID")) return "INVALID";
         if (isUnavailableVin(vin)) return "";
         // shortcut: accept real SDK 9-character identifiers until standard VINs are supplied.
         return vin.matches("[!-~]{9}|[A-HJ-NPR-Z0-9]{17}") ? vin : "";
@@ -64,7 +66,8 @@ public final class CarInfoDiagnosticService extends PleosReadSupport {
             raw[0] = "";
             session[0].close();
             if (vehicle[0] != null) try { vehicle[0].release(); } catch (RuntimeException ignored) { }
-            String status = !vin.isEmpty() ? "VIN 확인됨 · 기존 차량 식별에 사용"
+            String status = vin.equals("INVALID") ? "공통 식별키 invalid 사용 · 차량별 고유값 아님"
+                    : !vin.isEmpty() ? "VIN 확인됨 · 기존 차량 식별에 사용"
                     : state.equals("수신") ? invalid
                     : "VIN " + state + " · " + detail;
             result.accept(received, status);

@@ -20,6 +20,14 @@ public class MaintenanceSummaryTest {
         assertEquals("MANUFACTURER",summary.items.get(0).basisCode);
         assertTrue(summary.items.get(0).status(summary,LocalDate.now(),0).contains("근거 미확인"));
     }
+    @Test public void progressUsesTheMoreAdvancedValidCycleAndIgnoresStaleDistance() throws Exception {
+        long now=System.currentTimeMillis();
+        MaintenanceSummary current=summary(now,47000,"2027-01-01",52000);
+        assertEquals(50,current.items.get(0).cycleProgress(current,LocalDate.of(2026,1,1),now));
+        assertEquals(100,current.items.get(0).cycleProgress(current,LocalDate.of(2027,2,1),now));
+        MaintenanceSummary stale=summary(now-8L*24*60*60*1000,51000,"2027-01-01",52000);
+        assertEquals(0,stale.items.get(0).cycleProgress(stale,LocalDate.of(2026,1,1),now));
+    }
     private MaintenanceSummary summary(long observedAt, double odometerKm, String nextDate,
                                        double nextKm) throws Exception {
         return new MaintenanceSummary(new JSONObject().put("odometer", new JSONObject()

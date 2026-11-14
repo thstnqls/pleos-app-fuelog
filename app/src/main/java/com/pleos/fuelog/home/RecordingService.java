@@ -57,8 +57,9 @@ public final class RecordingService extends Service {
     }
     private void refreshNotice() {
         String owner=recorder.verifiedOwner();
-        if(!safe || !recorder.parked() || owner.isEmpty() || !noticeOwner.isEmpty() && !noticeOwner.equals(owner)) notifications.cancel(CHARGED);
-        if(!safe || !recorder.parked() || owner.isEmpty()) return;
+        boolean enabled = ConnectionSession.get(this).notifications.enabled();
+        if(!enabled || !safe || !recorder.parked() || owner.isEmpty() || !noticeOwner.isEmpty() && !noticeOwner.equals(owner)) notifications.cancel(CHARGED);
+        if(!enabled || !safe || !recorder.parked() || owner.isEmpty()) return;
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED) return;
         JSONObject pending=recorder.pendingChargeNotice();
         if(pending==null) return;

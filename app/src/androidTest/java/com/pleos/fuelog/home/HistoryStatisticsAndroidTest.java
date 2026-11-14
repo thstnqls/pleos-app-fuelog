@@ -52,6 +52,7 @@ public class HistoryStatisticsAndroidTest {
             constructor.setAccessible(true);
             ConnectionSession connection = constructor.newInstance(isolated, new ApiClient("http://127.0.0.1:1/"));
             connection.authenticatedSubject = "owner"; connection.state = "ERROR";
+            connection.authenticatedName = "driver@example.com";
             sessions.set(null, connection);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> recordersSet(recorders, new HomeRecorder(isolated)));
             HomeRecorder recorder = HomeRecorder.get(isolated);
@@ -65,7 +66,24 @@ public class HistoryStatisticsAndroidTest {
                         render(activity);
                         View root = activity.findViewById(android.R.id.content);
                         assertTrue(contains(root, "2건 · 합계 30.0 km"));
+                        assertNotNull(root.findViewWithTag("navigation.5"));
+                        assertFalse(contains(root, "운행 요약 새로 확인"));
+                        assertFalse(contains(root, "API 연결 확인됨"));
                         assertNull(root.findViewWithTag("trip.history.card.private"));
+                        snapshot(activity, "trip");
+                        JSONArray many = new JSONArray();
+                        for (int i = 0; i < 12; i++) many.put(trip("page-" + i, "owner", at, 1));
+                        isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).edit()
+                                .putString("history", many.toString()).commit();
+                        render(activity);
+                        assertTrue(contains(root, "12건 · 합계 12.0 km"));
+                        assertNull(root.findViewWithTag("trip.history.card.page-0"));
+                        root.findViewWithTag("history.more").performClick();
+                        assertNotNull(root.findViewWithTag("trip.history.card.page-0"));
+                        assertNull(root.findViewWithTag("history.more"));
+                        isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).edit()
+                                .putString("history", new JSONArray().put(first).put(latest).toString()).commit();
+                        render(activity);
                         root.findViewWithTag("statistics.0.period.0").performClick();
                         assertEquals(24, ((ViewGroup) root.findViewWithTag("statistics.0.chart")).getChildCount());
                         root.findViewWithTag("statistics.0.period.2").performClick();
@@ -86,6 +104,74 @@ public class HistoryStatisticsAndroidTest {
                         assertTrue(contains(root, "1건 · 합계 10.0 L"));
                         assertTrue(contains(root, "확인 전 · 통계 제외"));
                         assertTrue(contains(root, "기각됨 · 통계 제외"));
+                        field(CarHomeActivity.class, "page").set(activity, 0); render(activity);
+                        ViewGroup navigation = (ViewGroup) field(CarHomeActivity.class, "navigation").get(activity);
+                        int[] pages = {2, 3, 0, 4, 5};
+                        assertEquals(5, navigation.getChildCount());
+                        for (int i = 0; i < pages.length; i++) assertEquals("navigation." + pages[i], navigation.getChildAt(i).getTag());
+                        assertTrue(navigation.getChildAt(2).isSelected());
+                        assertFalse(contains(root, "이번 운행 · D → P"));
+                        assertFalse(contains(root, "확인할 항목"));
+                        assertFalse(contains(root, "운행 요약"));
+                        assertFalse(contains(root, "연결 상태"));
+                        field(CarHomeActivity.class, "page").set(activity, 3);
+                        JSONArray charges = new JSONArray();
+                        for (int i = 0; i < 12; i++) charges.put(new JSONObject().put("id", "charge-" + i)
+                                .put("status", "CANDIDATE").put("startAt", at).put("endAt", at + 1000).put("estimatedKwh", 2)
+                                .put("scenarios", new JSONArray().put(new JSONObject().put("powerBand", "SLOW")
+                                        .put("averageWonPerKwh", "100").put("stations", new JSONArray().put(new JSONObject()
+                                                .put("name", "참고 충전소 A").put("address", "서울 테스트로 1").put("wonPerKwh", "100"))))));
+                        isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).edit().putString("history",
+                                new JSONArray().put(new JSONObject().put("intervalId", "charging").put("owner", "owner")
+                                        .put("evDetected", true).put("chargingOnly", true).put("endedAt", at + 1000)
+                                        .put("chargeCandidates", charges)).toString()).commit();
+                        render(activity);
+                        assertTrue(contains(root, "12건 · 합계 24.0 kWh"));
+                        assertTrue(contains(root, "참고 충전소 · 참고 충전소 A · 서울 테스트로 1 · 100원/kWh"));
+                        assertNotNull(root.findViewWithTag("history.more"));
+                        snapshot(activity, "charge");
+                        root.findViewWithTag("history.more").performClick();
+                        assertNull(root.findViewWithTag("history.more"));
+                        root.findViewWithTag("charge.metric.1").performClick();
+                        assertTrue(contains(root, "12건 · 합계 2,400.0 원"));
+                        connection.vehicleAlias = "우리 차";
+                        ((ConnectionSettings) field(CarHomeActivity.class, "settings").get(activity)).snapshot.put("deviceAlias", "내 휴대폰");
+                        field(CarHomeActivity.class, "maintenanceSummary").set(activity, new MaintenanceSummary(new JSONObject()
+                                .put("manufacturerDefaults", new JSONArray()
+                                        .put(new JSONObject().put("name", "브레이크 오일").put("intervalMonths", 24))
+                                        .put(new JSONObject().put("name", "에어컨 필터").put("intervalMonths", 12)))
+                                .put("items", new JSONArray()
+                                        .put(new JSONObject().put("name", "일반 정비").put("nextDueDate", "2020-01-01"))
+                                        .put(new JSONObject().put("name", "위험 정비").put("riskLevel", "DANGER")))));
+                        field(CarHomeActivity.class, "maintenanceVehicleId").set(activity, connection.vehicleId);
+                        field(CarHomeActivity.class, "page").set(activity, 0); render(activity);
+                        View urgent = root.findViewWithTag("home.maintenance");
+                        assertTrue(contains(urgent, "위험 정비"));
+                        assertFalse(contains(urgent, "일반 정비"));
+                        assertNotNull(root.findViewWithTag("home.connection"));
+                        assertTrue(contains(root.findViewWithTag("home.connection"), "우리 차 ↔ driver@example.com"));
+                        assertFalse(contains(root.findViewWithTag("home.connection"), "내 휴대폰"));
+                        assertFalse(contains(root.findViewWithTag("home.connection"), "현재 사용자 ·"));
+                        assertFalse(contains(root, "우리 차 · 정차 상태"));
+                        snapshot(activity, "home");
+                        field(CarHomeActivity.class, "page").set(activity, 4); render(activity);
+                        assertNull(root.findViewWithTag("vehicle.odometer"));
+                        assertFalse(contains(root, "모바일에서 기록"));
+                        snapshot(activity, "maintenance");
+                        connection.authenticatedName = "driver@example.com";
+                        field(CarHomeActivity.class, "page").set(activity, 5); render(activity);
+                        assertNotNull(root.findViewWithTag("settings.alias.edit"));
+                        assertNotNull(root.findViewWithTag("settings.collection"));
+                        assertNotNull(root.findViewWithTag("settings.chargeNotifications"));
+                        assertTrue(contains(root, "driver@example.com"));
+                        assertFalse(contains(root, "설치 등록 방식"));
+                        assertFalse(contains(root, "연결 상태 새로 확인  →"));
+                        assertFalse(contains(root, "VIN 다시 조회  →"));
+                        assertFalse(contains(root, "API 연결 확인됨"));
+                        assertFalse(contains(root, "연결 상세 확인  →"));
+                        snapshot(activity, "settings");
+                        isolated.getSharedPreferences("home_recording", Context.MODE_PRIVATE).edit()
+                                .putString("history", new JSONArray().put(first).put(latest).toString()).commit();
                         connection.linked = false; recorder.sync.pause();
                         recorder.enqueueMobile("older");
                         assertTrue(recorder.mobileQueued("older"));
@@ -105,6 +191,22 @@ public class HistoryStatisticsAndroidTest {
 
     private static void recordersSet(Field field, HomeRecorder recorder) {
         try { field.set(null, recorder); } catch (Exception error) { throw new AssertionError(error); }
+    }
+    private static void snapshot(CarHomeActivity activity, String name) throws Exception {
+        if (!"true".equals(InstrumentationRegistry.getArguments().getString("captureUi"))) return;
+        View view = (View) field(CarHomeActivity.class, "body").get(activity);
+        int width = activity.getResources().getDisplayMetrics().widthPixels;
+        view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        view.layout(0, 0, width, view.getMeasuredHeight());
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, view.getMeasuredHeight(), android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        canvas.drawColor(activity.getColor(com.pleos.fuelog.R.color.car_background));
+        view.draw(canvas);
+        try (var output = new java.io.FileOutputStream(new File(activity.getCacheDir(), "ui-" + name + ".png"))) {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
+        }
+        bitmap.recycle();
     }
     private static JSONObject trip(String id, String owner, long at, double distance) throws Exception {
         return new JSONObject().put("intervalId", id).put("owner", owner).put("candidateId", "")

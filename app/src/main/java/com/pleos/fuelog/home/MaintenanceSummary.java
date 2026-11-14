@@ -16,10 +16,13 @@ public final class MaintenanceSummary {
     public final Double odometerKm;
     public final long odometerObservedAt;
     public final List<Item> items;
+    public final JSONArray manufacturerDefaults, completedServices;
     public final boolean canEdit;
     public final String editorSubjectId;
 
     public MaintenanceSummary(JSONObject response) throws JSONException {
+        manufacturerDefaults=response.optJSONArray("manufacturerDefaults")==null?new JSONArray():new JSONArray(response.getJSONArray("manufacturerDefaults").toString());
+        completedServices=response.optJSONArray("completedServices")==null?new JSONArray():new JSONArray(response.getJSONArray("completedServices").toString());
         canEdit = response.optBoolean("canEdit");
         editorSubjectId = response.optString("editorSubjectId", "");
         JSONObject odometer = response.optJSONObject("odometer");
@@ -73,6 +76,15 @@ public final class MaintenanceSummary {
             basisCode=source;
             basis = source.equals("USER") ? "차량 설정" : source.equals("MANUFACTURER")
                     ? "제조사 기준" : "기준 확인 필요";
+        }
+
+        public int cycleProgress(MaintenanceSummary summary,LocalDate today,long now) {
+            double progress=-1;
+            if(lastDate!=null && nextDate!=null && nextDate.isAfter(lastDate))
+                progress=(double)ChronoUnit.DAYS.between(lastDate,today)/ChronoUnit.DAYS.between(lastDate,nextDate);
+            if(lastKm!=null && nextKm!=null && nextKm>lastKm && summary.hasRecentOdometer(now))
+                progress=Math.max(progress,(summary.odometerKm-lastKm)/(nextKm-lastKm));
+            return progress<0?-1:(int)Math.round(Math.min(1,progress)*100);
         }
 
         public long daysUntil(LocalDate today) {

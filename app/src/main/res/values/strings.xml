@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">fuelog</string>
+    <string name="app_name">풀록</string>
     <string name="diagnostic_title">fuelog 차량 데이터 확인</string>
     <string name="diagnostic_reading_metadata">%1$s\n%2$s%3$s · %4$s</string>
     <string name="diagnostic_intro">연료·전기·주행·차량 정보를 탭별로 확인하는 정차용 진단 화면입니다.\n각 항목의 실제 값과 지원 상태를 구분합니다. 위치·VIN은 선택 조회하며, 저장하거나 서버에 전송하지 않습니다.</string>

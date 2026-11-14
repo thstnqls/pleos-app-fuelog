@@ -1,0 +1,6 @@
+<resources>
+    <style name="SettingsSwitchText">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/car_foreground</item>
+    </style>
+</resources>

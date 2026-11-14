@@ -25,7 +25,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import com.google.android.material.tabs.TabLayout;
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -45,13 +44,14 @@ import com.pleos.fuelog.diagnostics.AaosVehicleDiagnosticService;
 import com.pleos.fuelog.home.HomeRecorder;
 import com.pleos.fuelog.home.MaintenanceSummary;
 import com.pleos.fuelog.home.MaintenancePlanEditor;
-import com.pleos.fuelog.home.TripState;
 import com.pleos.fuelog.home.TripSummary;
 import com.pleos.fuelog.home.TripHistory;
 import com.pleos.fuelog.home.RecordStatistics;
+import com.pleos.fuelog.home.ChargeHistory;
 import com.pleos.fuelog.home.FuelLocationEvidence;
 import com.pleos.fuelog.home.VehicleOdometer;
 import com.pleos.fuelog.time.AppTime;
+import com.pleos.fuelog.ui.ConsentDialogs;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.Locale;
@@ -64,17 +64,20 @@ import org.json.JSONObject;
 public final class CarHomeActivity extends AppCompatActivity {
     private static final int HOME = 0, TRIP = 2, FUEL = 3;
     private static final int MAINTENANCE = 4, SETTINGS = 5, CONNECT = 6;
-    private final int[] navPages = {HOME, TRIP, FUEL, MAINTENANCE};
-    private final String[] navLabels = {"홈", "운행", "주유", "정비"};
+    private final int[] navPages = {TRIP, FUEL, HOME, MAINTENANCE, SETTINGS};
+    private final String[] navLabels = {"운행", "주유", "홈", "정비", "연결"};
     private LinearLayout body;
+    private ScrollView contentScroll;
+    private final int[] historyLimit = {10, 10};
+    private boolean moreHistory;
     private LinearLayout navigation;
     private TextView status;
     private Button headerNavigation;
     private AaosVehicleDiagnosticService restrictions;
     private boolean allowed;
-    private int page = CONNECT;
-    private int startTab;
+    private int page = HOME;
     private boolean basicInfoLoaded;
+    private String vehicleAliasDraft = "";
     private ConnectionSession connection;
     private final Handler connectionHandler = new Handler(Looper.getMainLooper());
     private boolean started;
@@ -83,8 +86,9 @@ public final class CarHomeActivity extends AppCompatActivity {
     private AlertDialog tripSplitAlert;
     private String tripSplitOwner = "";
     private String selectedTripId = "", selectedTripOwner = "";
-    private final int[] statisticsPeriod = {1, 1};
-    private final LocalDate[] statisticsDate = {LocalDate.now(), LocalDate.now()};
+    private final int[] statisticsPeriod = {1, 1, 1};
+    private final LocalDate[] statisticsDate = {LocalDate.now(), LocalDate.now(), LocalDate.now()};
+    private int chargeMetric = 0; // 0: kWh, 1: estimated KRW
     private boolean startupPermissionsInFlight;
     private boolean liveRecorderStarted;
     private ConnectionSettings settings;
@@ -116,7 +120,6 @@ public final class CarHomeActivity extends AppCompatActivity {
                 connection.refreshIdentity(() -> {
                     if (!started) return;
                     if (!connection.linked && settings.pending().isEmpty()) {
-                        startTab = 0;
                         page = CONNECT;
                         cancelMaintenance();
                         closeMaintenanceEditor();
@@ -159,10 +162,11 @@ public final class CarHomeActivity extends AppCompatActivity {
         if (!BuildConfig.DEBUG) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (state != null) {
             page = state.getInt("page", HOME);
-            startTab = state.getInt("startTab", 0);
+            vehicleAliasDraft = state.getString("vehicleAliasDraft", "");
+            chargeMetric = state.getInt("chargeMetric", 0) == 1 ? 1 : 0;
             selectedTripId = state.getString("selectedTripId", "");
             selectedTripOwner = state.getString("selectedTripOwner", "");
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < statisticsPeriod.length; i++) {
                 statisticsPeriod[i] = state.getInt("statisticsPeriod" + i, 1);
                 statisticsDate[i] = LocalDate.ofEpochDay(state.getLong("statisticsDate" + i, LocalDate.now().toEpochDay()));
             }
@@ -180,7 +184,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         buildShell();
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
-                if (page == TRIP && !selectedTripId.isEmpty()) { selectedTripId = ""; closeTripSplit(); render(); }
+                if ((page == TRIP || page == FUEL) && !selectedTripId.isEmpty()) { selectedTripId = ""; closeTripSplit(); render(); }
                 else if (page == HOME || page == CONNECT || !settings.pending().isEmpty()) finish();
                 else navigate(HOME);
             }
@@ -206,23 +210,25 @@ public final class CarHomeActivity extends AppCompatActivity {
         root.addView(header, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout top = compact ? row() : header;
         if (compact) header.addView(top, new LinearLayout.LayoutParams(-1, -2));
-        TextView brand = label("fuelog", 28, true, false);
-        top.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        ImageView brand = new ImageView(this);
+        brand.setImageResource(R.drawable.fuelog_wordmark);
+        brand.setContentDescription("fuelog");
+        brand.setScaleType(ImageView.ScaleType.FIT_START);
+        brand.setAdjustViewBounds(true);
+        top.addView(brand, new LinearLayout.LayoutParams(dp(168), dp(40)));
         status = label("정차 상태 확인 중", 18, true, false);
         status.setPadding(dp(12), dp(7), dp(12), dp(7));
         status.setBackground(shape(R.color.car_soft, 24, 0));
-        if (!compact) header.addView(status);
         headerNavigation = headerAction("연결 상태  →", () -> navigate(SETTINGS));
         top.addView(headerNavigation);
-        if (compact) {
-            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-2, -2);
-            statusParams.setMargins(0, dp(10), 0, 0);
-            header.addView(status, statusParams);
-        }
         divider(root);
 
         ScrollView scroll = new ScrollView(this);
+        contentScroll = scroll;
         scroll.setTag("history.scroll");
+        scroll.setOnScrollChangeListener((view, x, y, oldX, oldY) -> {
+            if (y > oldY && y + scroll.getHeight() >= body.getHeight() - dp(120)) loadMoreHistory();
+        });
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         body = column();
@@ -247,6 +253,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         connection.onPersonalInvalid = () -> { cancelFuelSync(); closeMaintenanceEditor(); recorder.clearPersonalCache(); if (started && allowed) render(); };
         offerTripSummary = !recorder.trip.active && recorder.summary() != null;
         startLiveRecorder();
+        if (connection.linked && settings.pending().isEmpty()) settings.refresh(this::settingsChanged);
         connectionHandler.post(connectionTick);
         allowed = false;
         render();
@@ -283,11 +290,14 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
+        android.widget.EditText alias = body.findViewWithTag("pairing.vehicleAlias");
+        if (alias != null) vehicleAliasDraft = alias.getText().toString();
+        out.putString("vehicleAliasDraft", vehicleAliasDraft);
         out.putInt("page", allowed ? page : HOME);
-        out.putInt("startTab", startTab);
+        out.putInt("chargeMetric", chargeMetric);
         out.putString("selectedTripId", selectedTripId);
         out.putString("selectedTripOwner", selectedTripOwner);
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < statisticsPeriod.length; i++) {
             out.putInt("statisticsPeriod" + i, statisticsPeriod[i]);
             out.putLong("statisticsDate" + i, statisticsDate[i].toEpochDay());
         }
@@ -298,6 +308,8 @@ public final class CarHomeActivity extends AppCompatActivity {
     private void navigate(int destination) {
         if (!allowed) return;
         selectedTripId = "";
+        contentScroll.scrollTo(0, 0);
+        historyLimit[0] = historyLimit[1] = 10;
         closeTripSplit();
         closeMaintenanceEditor();
         if (!settings.pending().isEmpty()) destination = SETTINGS;
@@ -310,7 +322,8 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
         render();
         if (showingMaintenance()) loadMaintenance();
-        if (page == SETTINGS) settings.refresh(this::settingsChanged);
+        if (page == HOME || page == SETTINGS) settings.refresh(this::settingsChanged);
+        if (page == SETTINGS) connection.notifications.refresh(() -> { if (started && allowed) render(); });
         if (page == TRIP) {
             recorder.refreshTripHistory();
             recorder.refreshTripCost();
@@ -334,20 +347,37 @@ public final class CarHomeActivity extends AppCompatActivity {
         body.post(this::showStartupConsent);
         if (maintenanceEditor != null && (!allowed || !canEditMaintenance())) closeMaintenanceEditor();
         if (!connection.linked && page != SETTINGS) page = CONNECT;
+        android.widget.EditText alias = body.findViewWithTag("pairing.vehicleAlias");
+        if (alias != null) {
+            vehicleAliasDraft = alias.getText().toString();
+            // Keep the active input connection and composing text during periodic refreshes.
+            if (alias.hasFocus() && alias.length() > 0 && allowed && page == CONNECT && !connection.linked
+                    && connection.vehicleAlias.isBlank() && settings.pending().isEmpty()) return;
+        }
         body.removeAllViews();
+        moreHistory = false;
         navigation.removeAllViews();
         boolean navigationAllowed = allowed && settings.pending().isEmpty();
-        headerNavigation.setVisibility(navigationAllowed && (connection.linked || page != CONNECT) ? View.VISIBLE : View.GONE);
+        headerNavigation.setVisibility(View.GONE);
         navigation.setVisibility(navigationAllowed && connection.linked ? View.VISIBLE : View.GONE);
         headerNavigation.setText(page == HOME ? "연결 상태  →" : "←  홈");
         headerNavigation.setOnClickListener(v -> navigate(page == HOME ? SETTINGS : HOME));
         if (!allowed) {
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(R.drawable.fuelog_icon_locked);
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams image = new LinearLayout.LayoutParams(dp(128), dp(128));
+            image.bottomMargin = dp(24);
+            body.addView(icon, image);
             heading(body, "정차 후 확인할 수 있어요");
             paragraph(body, "차량의 이용 제한 상태를 확인 중이거나 화면 조작이 제한되었습니다.");
             paragraph(body, "정차 후 다시 앱을 열어 주세요.");
             return;
         }
-        renderApiStatus();
+        if(settings.pending().isEmpty() && connection.hasServer() && connection.checkingVehicle() && online()) {
+            headerNavigation.setVisibility(View.GONE);navigation.setVisibility(View.GONE);
+            renderVehicleLoading();return;
+        }
         switch (page) {
             case TRIP: renderTrip(); break;
             case FUEL: renderFuel(); break;
@@ -359,10 +389,11 @@ public final class CarHomeActivity extends AppCompatActivity {
         if (!connection.linked || !settings.pending().isEmpty()) return;
         for (int i = 0; i < navPages.length; i++) {
             final int destination = navPages[i];
-            Button tab = headerAction(navLabels[i], () -> navigate(destination));
+            Button tab = headerAction(destination == FUEL && recorder.electricVehicle() ? "충전" : navLabels[i], () -> navigate(destination));
             boolean selected = page == destination;
             tab.setSelected(selected);
-            tab.setTextSize(24);
+            tab.setTextSize(compact() ? 18 : 24);
+            tab.setTag("navigation." + destination);
             tab.setTextColor(color(selected ? R.color.car_on_accent : R.color.car_muted));
             tab.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)),
                     shape(selected ? R.color.car_accent : R.color.car_soft, 24, 0), null));
@@ -374,55 +405,68 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
     }
 
+    private void renderVehicleLoading() {
+        LinearLayout loading=column();loading.setGravity(Gravity.CENTER_HORIZONTAL);
+        loading.setPadding(dp(24),dp(56),dp(24),dp(32));
+        body.addView(loading,new LinearLayout.LayoutParams(-1,-2));
+        ImageView icon=new ImageView(this);icon.setImageResource(R.mipmap.ic_launcher);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams image=new LinearLayout.LayoutParams(dp(96),dp(96));image.bottomMargin=dp(24);
+        loading.addView(icon,image);
+        heading(loading,"차량을 확인하고 있어요");
+        android.widget.ProgressBar progress=new android.widget.ProgressBar(this);
+        progress.setIndeterminateTintList(ColorStateList.valueOf(color(R.color.car_link)));
+        progress.setContentDescription("차량 연결 확인 중");
+        LinearLayout.LayoutParams spinner=new LinearLayout.LayoutParams(dp(48),dp(48));spinner.setMargins(0,dp(20),0,dp(20));
+        loading.addView(progress,spinner);
+        paragraph(loading,connection.vehicleCheckMessage());
+        paragraph(loading,"확인이 끝나면 자동으로 다음 화면으로 이동합니다.");
+        loading.setTag("vehicle.loading");loading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    }
+
     // 3. 차량 연결: QR 스캔 → 양쪽 확인 코드 비교 → 차량에서 최종 승인.
     private void renderConnect() {
-        TabLayout tabs = new TabLayout(this);
-        tabs.setTag("start.tabs");
-        tabs.setBackgroundColor(color(R.color.car_panel));
-        tabs.setTabTextColors(color(R.color.car_muted), color(R.color.car_on_accent));
-        tabs.setSelectedTabIndicatorColor(color(R.color.car_accent));
-        tabs.addTab(tabs.newTab().setText("QR 연결"));
-        tabs.addTab(tabs.newTab().setText("차량 기본정보"));
-        tabs.selectTab(tabs.getTabAt(startTab));
-        tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override public void onTabSelected(TabLayout.Tab tab) {
-                startTab = tab.getPosition();
-                if (startTab == 1) {
-                    startVehicleOdometer();
-                    basicInfoLoaded = !connection.vehicleId.isEmpty();
-                    loadMaintenance();
-                }
-                else { cancelMaintenance(); render(); }
-            }
-            @Override public void onTabUnselected(TabLayout.Tab tab) {}
-            @Override public void onTabReselected(TabLayout.Tab tab) {}
-        });
-        body.addView(tabs);
-        if (startTab == 1) {
-            heading(body, "차량 기본정보");
-            paragraph(body, connection.vehicleId.isEmpty() ? "등록된 차량을 확인하면 공동 정비 정보를 볼 수 있습니다. 최초 차량 등록은 QR 연결에서 진행해 주세요."
-                    : connection.vehicleAlias.isBlank() ? connection.vehicleName : connection.vehicleAlias);
-            paragraph(body, "공동 정비와 차량 누적거리는 사용자 연결 없이 확인할 수 있습니다.");
-            sectionLabel(body, "현재 차량 센서");
-            paragraph(body, "차량에서 직접 읽는 현재 값입니다. 아래 정비 이력의 마지막 수신값과 구분해 확인하세요.");
-            link(body, "현재 차량 거리 확인", () -> openDiagnostics(2));
-            link(body, "현재 배터리 확인", () -> openDiagnostics(1));
-            renderMaintenance();
-            return;
-        }
-        heading(body, "휴대폰으로 차량을 연결하세요");
-        paragraph(body, connection.vinStatus);
-        if (!connection.receivedVin.isEmpty()) paragraph(body, "VIN 수신값 · " + connection.receivedVin);
-        link(body, "VIN 다시 조회", () -> connection.recheckVin(() -> { if (started && allowed) render(); }));
+        LinearLayout split = new com.pleos.fuelog.ui.AdaptiveRow(this, 400);
+        split.setTag("start.split");
+        body.addView(split, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout qr = column(), info = column();
+        qr.setTag("start.qr"); info.setTag("start.vehicle");
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, -2, 1);
+        left.setMargins(0, 0, dp(24), 0);
+        split.addView(qr, left);
+        split.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
+        renderQrConnection(qr);
+        renderBasicVehicleInfo(info);
+    }
+
+    private void renderBasicVehicleInfo(LinearLayout parent) {
+        heading(parent, "차량 기본정보");
+        paragraph(parent, connection.vehicleId.isEmpty() ? "등록된 차량을 확인하면 공동 정비 정보를 볼 수 있습니다. 최초 차량 등록은 QR 연결에서 진행해 주세요."
+                : connection.vehicleAlias.isBlank() ? connection.vehicleName : connection.vehicleAlias);
+        paragraph(parent, "공동 정비와 차량 누적거리는 사용자 연결 없이 확인할 수 있습니다.");
+        renderVehicleOdometer(parent);
+        renderMaintenanceCycles(parent);
+    }
+
+    private String vinReceiptStatus() {
+        return !connection.receivedVin.isBlank() ? "VIN 수신 완료"
+                : connection.checkingVehicle() ? "VIN 수신 확인 중" : "VIN 미수신";
+    }
+
+    private void renderQrConnection(LinearLayout parent) {
+        heading(parent, "QR 연결");
+        paragraph(parent, "휴대폰으로 차량을 연결하세요");
+        paragraph(parent, vinReceiptStatus());
+        link(parent, "VIN 다시 조회", () -> connection.recheckVin(() -> { if (started && allowed) render(); }));
         if (!connection.vehicleAlias.isBlank()) {
-            subheading(body, connection.vehicleAlias);
-            link(body, "차량 별칭 수정", this::editVehicleAlias);
+            subheading(parent, connection.vehicleAlias);
+            link(parent, "차량 별칭 수정", this::editVehicleAlias);
         }
-        if (!online()) { paragraph(body, "인터넷 연결이 필요합니다. 네트워크를 확인해 주세요."); return; }
-        if (connection.linked) { link(body, "이미 연결된 기기 · 연결 설정", () -> navigate(SETTINGS)); return; }
+        if (!online()) { paragraph(parent, "인터넷 연결이 필요합니다. 네트워크를 확인해 주세요."); return; }
+        if (connection.linked) { link(parent, "이미 연결된 기기 · 연결 설정", () -> navigate(SETTINGS)); return; }
         if (connection.vehicleAlias.isBlank()) {
-            subheading(body, "차량 별칭을 먼저 지정해 주세요");
-            paragraph(body, "새 차량 등록 시 차량 이름으로 사용합니다.");
+            subheading(parent, "차량 별칭을 먼저 지정해 주세요");
+            paragraph(parent, "새 차량 등록 시 차량 이름으로 사용합니다.");
             android.widget.EditText alias = new android.widget.EditText(this);
             alias.setTag("pairing.vehicleAlias");
             alias.setContentDescription("차량 별칭");
@@ -430,19 +474,24 @@ public final class CarHomeActivity extends AppCompatActivity {
             alias.setSingleLine(true);
             alias.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN);
             alias.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(100)});
-            body.addView(alias, new LinearLayout.LayoutParams(-1, -2));
+            alias.setText(vehicleAliasDraft);
+            LinearLayout form = column();
+            form.setTag("pairing.aliasForm");
+            parent.addView(form, new LinearLayout.LayoutParams(-1, -2));
+            form.addView(alias, new LinearLayout.LayoutParams(-1, -2));
             Button issue = button("별칭 저장하고 QR 받기", true, () -> {
                 try {
                     connection.setVehicleAlias(alias.getText().toString());
+                    vehicleAliasDraft = "";
                     connection.retry(() -> { if (started && allowed) render(); });
                 } catch (Exception invalid) { alias.setError("차량 별칭을 입력해 주세요 (1~100자)"); }
             });
             issue.setTag("pairing.issue");
-            body.addView(issue, fullButton());
+            form.addView(issue, fullButton());
             return;
         }
         if (connection.state.equals("AWAITING_CONFIRMATION") && connection.remaining() > 0) {
-            LinearLayout pairing = pairingCard(body);
+            LinearLayout pairing = pairingCard(parent);
             pairingText(pairing, "휴대폰에 확인 코드를 입력해 주세요", 24, R.color.car_on_dark);
             TextView code = label(connection.confirmationCode, 40, true, false);
             code.setTextColor(color(R.color.car_mint));
@@ -473,7 +522,8 @@ public final class CarHomeActivity extends AppCompatActivity {
             return;
         }
         if (connection.state.equals("WAITING") && connection.remaining() > 0) {
-            LinearLayout layout = grid(body);
+            LinearLayout layout = column();
+            parent.addView(layout, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout qr = pairingCard(layout);
             showQr(qr, connection.payload, "모바일 fuelog 앱으로 스캔할 차량 연결 QR");
             pairingText(qr, "남은 시간 " + connection.remaining() + "초 · 연결 대기 중", 20, R.color.car_mint);
@@ -481,9 +531,9 @@ public final class CarHomeActivity extends AppCompatActivity {
             paragraph(steps, "1. 휴대폰 fuelog 앱 열기\n2. 차량 등록에서 QR 스캔\n3. 로그인 후 차량 확인");
             tag(steps, "휴대폰 승인 후 차량에서 최종 확인");
         } else {
-            paragraph(body, connection.state.equals("EXPIRED") || connection.remaining() == 0 ? "연결 코드가 만료되었습니다" :
+            paragraph(parent, connection.state.equals("EXPIRED") || connection.remaining() == 0 ? "연결 코드가 만료되었습니다" :
                     connection.message.isEmpty() ? "연결 QR 준비 중" : connection.message);
-            primary(body, "코드 다시 받기", () -> connection.retry(() -> { if (started && allowed) render(); }));
+            primary(parent, "코드 다시 받기", () -> connection.retry(() -> { if (started && allowed) render(); }));
         }
     }
 
@@ -497,14 +547,6 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
     }
 
-    private void openDiagnostics(int category) {
-        if (category == 1 && checkSelfPermission("android.car.permission.CAR_ENERGY") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestServicePermission("android.car.permission.CAR_ENERGY", 102); return;
-        }
-        if (started && allowed) startActivity(new Intent(this, DiagnosticActivity.class)
-                .putExtra("diagnostic.category", category));
-    }
-
     private void startVehicleOdometer() {
         if (!started || !allowed) return;
         try {
@@ -516,7 +558,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 });
                 vehicleOdometer.read();
             }
-            if (page == CONNECT && startTab == 1) vehicleOdometer.startUpdates();
+            if (page == CONNECT) vehicleOdometer.startUpdates();
         } catch (RuntimeException error) { vehicleOdometerMessage = "차량 거리 연결 실패 · 앱을 다시 열어 주세요"; }
     }
 
@@ -526,12 +568,18 @@ public final class CarHomeActivity extends AppCompatActivity {
         vehicleOdometerMessage = "차량 연결 확인 중";
     }
 
-    private void renderVehicleOdometer() {
-        LinearLayout current = section(body);
+    private void renderVehicleOdometer(LinearLayout parent) {
+        LinearLayout current = section(parent);
         current.setTag("vehicle.odometer");
         subheading(current, "차량 총 누적거리");
         VehicleOdometer reading = vehicleOdometer;
         detail(current, "마지막 수신값", reading == null || reading.km == null ? "수신값 없음" : metric(reading.km, " km"));
+        if (page == HOME) {
+            paragraph(current, reading != null && reading.km != null && reading.observedAt > 0
+                    ? "최근 수신 · " + timeLabel(reading.observedAt)
+                    : reading == null ? vehicleOdometerMessage : reading.readStatus);
+            return;
+        }
         paragraph(current, reading == null ? vehicleOdometerMessage : reading.readStatus + " · " + reading.subscriptionStatus);
         if (reading != null && reading.observedAt > 0) paragraph(current, "차량에서 수신 · " + timeLabel(reading.observedAt));
         /*Button refresh = button("누적거리 1회 조회", false, () -> { if (vehicleOdometer != null) vehicleOdometer.read(); });*/
@@ -550,63 +598,97 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     // 5. 운행 기록: 홈에서 시작·종료하고 요약을 모바일 확인함으로 전달한다.
+    private void renderConsentStatus(LinearLayout parent) {
+        subheading(parent, "권한·동의 상태");
+        String[][] permissions = {
+                {"VIN", "pleos.car.permission.CAR_INFO"},
+                {"배터리", "android.car.permission.CAR_ENERGY"},
+                {"위치", com.pleos.fuelog.location.PleosLocationClient.PERMISSION},
+                {"충전 완료 알림", "android.permission.POST_NOTIFICATIONS"}};
+        LinearLayout permissionRow = null;
+        for (int i = 0; i < permissions.length; i++) {
+            String[] permission = permissions[i];
+            if (i % 2 == 0) {
+                permissionRow = new com.pleos.fuelog.ui.AdaptiveRow(this, 240); parent.addView(permissionRow, new LinearLayout.LayoutParams(-1, -2));
+            }
+            boolean granted = permission[1].equals("android.permission.POST_NOTIFICATIONS")
+                    ? androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
+                    : checkSelfPermission(permission[1]) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            TextView state = label(permission[0] + " · " + (granted ? "허용됨" : "미허용"), 22, false, false);
+            state.setTextColor(color(granted ? R.color.car_link : R.color.car_warning_text));
+            state.setPadding(0, dp(6), dp(8), dp(10));
+            permissionRow.addView(state, new LinearLayout.LayoutParams(0, -2, 1));
+        }
+        paragraph(parent, "차량 위치 보조 · " + (recorder.locationAssistConsent() ? "동의함"
+                : recorder.locationAssistDecisionMade() ? "동의하지 않음" : "동의 미확인"));
+        link(parent, "권한·동의 관리", () -> navigate(SETTINGS));
+    }
+
+    private void renderUrgentMaintenance() {
+        LinearLayout panel = card(body);
+        panel.setTag("home.maintenance");
+        subheading(panel, "우선 확인할 정비");
+        MaintenanceSummary summary = maintenanceVehicleId.equals(connection.vehicleId) ? maintenanceSummary : null;
+        if (summary == null) paragraph(panel, maintenanceMessage);
+        else if (summary.items.isEmpty()) paragraph(panel, "등록된 정비 항목이 없습니다.");
+        else {
+            LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+            long now = System.currentTimeMillis();
+            MaintenanceSummary.Item urgent = java.util.Collections.min(summary.items,
+                    java.util.Comparator.comparingInt((MaintenanceSummary.Item item) -> "DANGER".equals(item.riskLevel) ? 0 : 1)
+                            .thenComparingInt(item -> item.daysUntil(today) <= 0 || item.kmUntil(summary, now) != null && item.kmUntil(summary, now) <= 0 ? 0 : 1)
+                            .thenComparingInt(item -> -item.cycleProgress(summary, today, now))
+                            .thenComparingLong(item -> item.daysUntil(today)));
+            subheading(panel, urgent.name);
+            paragraph(panel, urgent.status(summary, today, now));
+            paragraph(panel, urgent.replacementDday(today));
+            String cycle = urgent.intervalKm == null ? "" : maintenanceDistance(urgent.intervalKm);
+            if (urgent.intervalMonths != null) cycle += (cycle.isEmpty() ? "" : " 또는 ") + urgent.intervalMonths + "개월";
+            paragraph(panel, cycle.isEmpty() ? "정비 주기 확인 필요" : "정비 주기 · " + cycle);
+            paragraph(panel, "마지막 정비 · " + maintenanceDate(urgent.lastDate) + " · " + maintenanceDistance(urgent.lastKm));
+            paragraph(panel, "다음 예정 · " + maintenanceDate(urgent.nextDate) + " · " + maintenanceDistance(urgent.nextKm));
+            Double remaining = urgent.kmUntil(summary, now);
+            if (remaining != null) paragraph(panel, remaining > 0 ? "남은 거리 · " + maintenanceDistance(remaining) : "예정 거리 도달");
+            paragraph(panel, "주기 출처 · " + urgent.basis);
+        }
+        paragraph(panel, "교체주기는 차량 공용 정보이며 오너 계정에서 변경할 수 있습니다.");
+        link(panel, "전체 정비 확인", () -> navigate(MAINTENANCE));
+    }
+
     private void renderHome() {
+        LinearLayout pairing = card(body);
+        pairing.setTag("home.connection");
+        tag(pairing, !connection.linked ? "연결 필요" : recorder.verifiedOwner().isEmpty() ? "사용자 확인 필요"
+                : online() ? "연결된 차량과 기기" : "오프라인 · 마지막 연결 정보");
+        heading(pairing, (connection.vehicleAlias.isBlank() ? "차량 별칭 미설정" : connection.vehicleAlias)
+                + " ↔ " + (recorder.verifiedOwner().isEmpty() ? "사용자 확인 필요"
+                : connection.authenticatedName.isBlank() ? "이메일 확인 중" : connection.authenticatedName));
+        renderConsentStatus(pairing);
+        renderVehicleOdometer(body);
+        renderUrgentMaintenance();
         if (offerTripSummary) {
             link(body, "저장된 운행 요약 확인", () -> { offerTripSummary = false; navigate(TRIP); });
         }
-        TripState trip = recorder.trip;
-        tag(body, "연결된 차량 · " + (!connection.vehicleAlias.isBlank() ? connection.vehicleAlias : connection.home.isNull("vehicleAlias") ? "별칭 미설정" : connection.home.optString("vehicleAlias")));
-        heading(body, recorder.verifiedOwner().isEmpty() ? "페어링 사용자 확인이 필요합니다" : recorder.displayUser());
-        paragraph(body, "현재 사용자 · " + recorder.displayUser());
-        link(body, "연결 상태 확인", () -> navigate(SETTINGS));
-        renderVehicleOdometer();
-        renderMaintenanceCycles();
         JSONObject homeDistance = connection.home.optJSONObject("distanceStatus");
         if (!connection.home.isNull("distanceKm") && homeDistance != null
                 && ("available".equals(homeDistance.optString("state")) || "stale".equals(homeDistance.optString("state"))))
             detail(body, "개인 홈 거리" + ("stale".equals(homeDistance.optString("state")) ? " · 이전 수신값" : ""),
                     metric(connection.home.optDouble("distanceKm"), " km"));
-        LinearLayout layout = grid(body);
-        LinearLayout current = card(layout);
-        tag(current, connection.linked ? trip.status(System.currentTimeMillis()) : "연결 필요");
-        subheading(current, recorder.chargingInterval() ? "충전 관측 · 스위치 ON → OFF" : "이번 운행 · D → P");
-        paragraph(current, recorder.chargeSwitchStatus() + " · 실제 충전·결제 완료와 구분합니다");
-        if (trip.sampledAt == 0) paragraph(current, trip.active ? "차량 거리 수신 대기" : "D 전환 대기 · 자동 기록");
-        else number(current, String.format(Locale.KOREA, "%.1f", trip.distance), " km");
-        paragraph(current, "마지막 샘플 · 최근 수신 " + timeLabel(trip.sampledAt));
-        JSONObject cost = connection.home.optJSONObject("estimatedCost");
-        paragraph(current, "추정 비용 · " + (cost == null || cost.isNull("value") || !"available".equals(cost.optString("status")) ? "개인 홈 인증 후 제공"
-                : metric(cost.optDouble("value"), " " + cost.optString("currency"))));
-        paragraph(current, "소모량·비용 계산에는 연료 잔량과 단가 확인이 필요합니다");
-        link(current, "이번 운행 요약", () -> navigate(TRIP));
-        paragraph(current, "D에서 운행을 시작하고 P에서 종료 거리와 운행 요약을 자동 저장합니다. 수집 서비스가 실행 중이면 화면을 닫아도 기록을 유지합니다.");
-        LinearLayout alerts = section(layout);
-        subheading(alerts, "확인할 항목");
-        paragraph(alerts, connection.home.isNull("fuelReviewCount") ? "필요한 알림 · 개인 홈 인증 후 조회"
-                : "주유 확인 " + connection.home.optInt("fuelReviewCount") + "건 · 정비 예정 " + connection.home.optInt("maintenanceDueCount") + "건");
-        link(alerts, "주유 확인", () -> navigate(FUEL));
-        link(alerts, "정비 예정", () -> navigate(MAINTENANCE));
-        paragraph(body, (online() ? recorder.syncMessage() : "오프라인 · 로컬 기록")
-                + " · 로컬 저장 " + timeLabel(trip.savedAt));
-        if (!compact()) {
-            LinearLayout footer = grid(body);
-            link(section(footer), "운행 요약", () -> navigate(TRIP));
-            link(section(footer), "연결 상태", () -> navigate(SETTINGS));
-        } else link(body, "운행 요약 및 상세", () -> navigate(TRIP));
     }
 
     private void renderTrip() {
         TripSummary summary = recorder.summary();
         if (selectedTripId.isEmpty()) {
             renderTripHistory();
-            if (summary != null && (recorder.trip.active || summary.data.optBoolean("chargingOnly"))) {
+            if (summary != null && recorder.trip.active && !summary.data.optBoolean("chargingOnly")) {
                 String currentId = summary.data.optString("intervalId");
-                link(body, summary.data.optBoolean("chargingOnly") ? "충전 관측 요약" : "현재 기록 상세", () -> openTrip(currentId));
+                link(body, "현재 기록 상세", () -> openTrip(currentId));
             }
             return;
         }
         if (summary == null || !selectedTripId.equals(summary.data.optString("intervalId"))) summary = recorder.completedTrip(selectedTripId);
-        link(body, "운행 목록으로", () -> { selectedTripId = ""; closeTripSplit(); render(); });
+        if (page != FUEL && summary != null && summary.data.optBoolean("chargingOnly")) { page = FUEL; render(); return; }
+        link(body, page == FUEL ? "충전 목록으로" : "운행 목록으로", () -> { selectedTripId = ""; closeTripSplit(); render(); });
         heading(body, summary != null && summary.data.optBoolean("chargingOnly") ? "충전 관측 요약" : "운행 상세");
         if (summary == null) {
             paragraph(body, "확인할 수 있는 운행 기록이 없습니다. 사용자를 확인하거나 기록을 시작해 주세요.");
@@ -617,6 +699,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         long end = data.optLong("endedAt");
         boolean electric = data.optBoolean("evDetected") || !data.has("startFuelLiters");
         double amount = TripHistory.amount(data, recorder.serverSummary(id));
+        if (!data.optBoolean("chargingOnly")) {
         detail(body, "추정 금액", metric(amount, "원"));
         final double total = amount;
         String splitOwner = recorder.verifiedOwner();
@@ -624,34 +707,36 @@ public final class CarHomeActivity extends AppCompatActivity {
         split.setTag("trip.detail.split");
         split.setEnabled(end > 0 && Double.isFinite(total) && total >= 0 && !data.optBoolean("chargingOnly"));
         body.addView(split, fullButton());
+        }
         paragraph(body, "앱 기록 구간 · " + timeLabel(data.optLong("startedAt")) + " → "
                 + (end == 0 ? "기록 진행 중" : timeLabel(end)) + (data.optBoolean("endEstimated") ? " · 종료 시각 추정" : ""));
+        if (!data.optBoolean("chargingOnly")) {
         LinearLayout distance = card(body);
         subheading(distance, "거리");
         paragraph(distance, data.optBoolean("chargingOnly") ? "정차 충전 관측 구간 · 운행 거리 계산 대상 아님" : data.optBoolean("distanceValid") ? metric(data.optDouble("distanceKm"), " km") : data.optLong("sampledAt") == 0 ? "차량 거리 수신 대기" : "첫 거리 수신 · 다음 샘플 대기");
+        }
         if (electric) {
-            detail(body, "충전 스위치", !data.optBoolean("chargeSwitchKnown") ? "미확인" : data.optBoolean("chargeSwitchOn") ? "ON" : "OFF");
+            if (page == FUEL) detail(body, "충전 스위치", !data.optBoolean("chargeSwitchKnown") ? "미확인" : data.optBoolean("chargeSwitchOn") ? "ON" : "OFF");
+            if (!data.optBoolean("chargingOnly")) {
             detail(body, "추정 소모 전력량", Double.isFinite(summary.consumedKwh()) ? metric(summary.consumedKwh(), " kWh") : batterySummaryReason(data));
             detail(body, "추정 전비", Double.isFinite(summary.evEconomy()) ? metric(summary.evEconomy(), " km/kWh") : "유효한 거리와 소모 전력량 확인 필요");
             renderTripCost(summary);
+            }
+            if (page == FUEL) {
             JSONArray charges = data.optJSONArray("chargeCandidates");
             if (charges != null) for (int i = 0; i < charges.length(); i++) {
                 JSONObject charge = charges.optJSONObject(i);
                 if (charge == null) continue;
-                String chargeState = charge.optString("status");
-                detail(body, chargeState.equals("CONFIRMED") ? "모바일 확인된 충전" : chargeState.equals("REJECTED") ? "기각된 충전 후보" : "충전 추정 · 사용자 확인 전",
-                        metric(charge.optDouble("estimatedKwh", Double.NaN), " kWh"));
-                renderLocation(charge.optString("id"));
-                link(body, "충전 후보 상태 확인", () -> refreshChargeCandidate(charge.optString("id")));
-                paragraph(body, "감지 " + timeLabel(charge.optLong("startAt")) + " → " + timeLabel(charge.optLong("endAt")));
+                renderChargeContent(body, charge);
             }
             paragraph(body, "배터리 증가는 충전·결제 완료를 의미하지 않습니다. 모바일에서 확인해 주세요.");
+            }
         } else {
             detail(body, "추정 소모량", metric(summary.liters(), " L"));
             detail(body, "추정 연비", metric(summary.economy(), " km/L"));
             detail(body, "추정 연료비", metric(summary.fuelCost(), "원"));
         }
-        paragraph(body, electric ? "추정 운행 비용은 실제 충전 결제금액과 다를 수 있습니다." : "단가 출처 · " + data.optString("priceSource", "유효한 단가 없음"));
+        if (!data.optBoolean("chargingOnly")) paragraph(body, electric ? "추정 운행 비용은 실제 충전 결제금액과 다를 수 있습니다." : "단가 출처 · " + data.optString("priceSource", "유효한 단가 없음"));
         sectionLabel(body, "기록 품질");
         paragraph(body, (data.optBoolean("missing") || data.optBoolean("evMissing")) ? "일부 누락 · 수신한 구간의 거리만 표시" : "감지된 누락 없음");
         paragraph(body, "최근 수신 " + timeLabel(data.optLong("sampledAt")));
@@ -659,7 +744,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 + " · " + timeLabel(data.optLong("savedAt")));
         if (!recorder.storageError.isEmpty()) paragraph(body, recorder.storageError);
         JSONObject serverSummary = recorder.serverSummary(id);
-        if (serverSummary != null) {
+        if (serverSummary != null && !data.optBoolean("chargingOnly")) {
             sectionLabel(body, "서버 운행 요약");
             detail(body, "거리", serverMetric(serverSummary, "distanceKm", " km"));
             detail(body, "소모량", serverMetric(serverSummary, electric ? "energyConsumedKwh" : "fuelConsumedLiters", electric ? " kWh" : " L"));
@@ -667,6 +752,10 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (!electric) detail(body, "비용", serverMetric(serverSummary, "estimatedCost", "원"));
         }
         paragraph(body, recorder.syncMessage());
+        if (data.optBoolean("chargingOnly")) {
+            paragraph(body, "충전 후보는 서버 동기화 후 모바일 충전 확인에서 확정할 수 있습니다.");
+            return;
+        }
         Button mobile = button(recorder.mobileDelivered(id) ? "모바일 전달 완료" : recorder.mobileQueued(id) ? "모바일 전달 대기 중" : "모바일에서 상세 확인", true, () -> {
             try { recorder.enqueueMobile(id); render(); }
             catch (Exception e) { paragraph(body, "모바일 전달 요청을 저장하지 못했습니다. 다시 시도해 주세요."); }
@@ -676,19 +765,74 @@ public final class CarHomeActivity extends AppCompatActivity {
         paragraph(body, "검증된 사용자 운행만 전달할 수 있습니다. 요약 업로드 후 모바일 확인함으로 전송합니다.");
     }
 
+    private void renderChargeHistory() {
+        JSONArray history = ChargeHistory.records(recorder.chargeHistory(), chargeMetric == 1);
+        renderCostTooltip(true);
+        LinearLayout metrics = row(); body.addView(metrics);
+        String[] labels = {"충전량", "금액"};
+        for (int i = 0; i < labels.length; i++) {
+            final int metric = i;
+            Button tab = button(labels[i], chargeMetric == i, () -> { chargeMetric = metric; render(); });
+            tab.setTag("charge.metric." + i); tab.setSelected(chargeMetric == i);
+            metrics.addView(tab, spacedButton());
+        }
+        RecordStatistics statistics = renderStatistics(2, history, chargeMetric == 0 ? "충전량" : "완속 기준 추정금액", chargeMetric == 0 ? "kWh" : "원");
+        if (statistics.count == 0) paragraph(body, "선택한 기간의 완료된 충전 기록이 없습니다.");
+        int visible = 0;
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject record = history.optJSONObject(i);
+            if (record == null || statistics.bucket(record.opt("statAt")) < 0) continue;
+            if (++visible > historyLimit[1]) { moreHistory = true; break; }
+            LinearLayout entry = card(body);
+            subheading(entry, "충전 관측 요약");
+            renderChargeContent(entry, record.optJSONObject("charge"));
+            String id = record.optString("intervalId");
+            entry.setTag("charge.history.card." + id);
+            link(entry, "충전 관측 요약 열기", () -> openTrip(id));
+        }
+        renderHistoryEnd();
+    }
+
+    private void renderChargeContent(LinearLayout parent, JSONObject charge) {
+        boolean confirmed = "CONFIRMED".equals(charge.optString("status"));
+        tag(parent, confirmed ? "모바일 확인된 충전" : "REJECTED".equals(charge.optString("status")) ? "기각된 충전 후보" : "충전 관측 · 사용자 확인 전");
+        detail(parent, confirmed ? "확인된 충전량" : "관측 충전량",
+                metric(confirmed && !charge.isNull("correctedKwh") ? charge.optDouble("correctedKwh") : charge.optDouble("estimatedKwh", Double.NaN), " kWh"));
+        java.math.BigDecimal estimate = ChargeHistory.amount(charge);
+        detail(parent, "완속 기준 추정금액", estimate == null ? "위치·완속 요금 미확인" : estimate.toPlainString() + "원");
+        JSONObject slow = ChargeHistory.slow(charge);
+        if (slow != null) {
+            paragraph(parent, "충전 당시 위치의 주변 완속 참고 단가 · " + slow.optString("averageWonPerKwh") + "원/kWh · 실제 결제금액과 다를 수 있습니다.");
+            JSONArray stations = slow.optJSONArray("stations");
+            for (int i = 0; stations != null && i < stations.length(); i++) {
+                JSONObject station = stations.optJSONObject(i);
+                if (station != null) paragraph(parent, "참고 충전소 · " + station.optString("name") + " · " + station.optString("address")
+                        + " · " + station.optString("wonPerKwh") + "원/kWh");
+            }
+        }
+        detail(parent, "실제 결제금액", confirmed && !charge.isNull("correctedAmount")
+                ? metric(charge.optDouble("correctedAmount"), "원") : "모바일 확인 필요");
+        if (confirmed && !charge.isNull("correctedPlace")) paragraph(parent, "충전 장소 · " + charge.optString("correctedPlace"));
+        paragraph(parent, charge.optLong("serverRevision") > 0 ? "충전 후보 서버 동기화 완료" : "충전 후보 로컬 저장 · 업로드 대기");
+        link(parent, "충전 후보 상태 확인", () -> refreshChargeCandidate(charge.optString("id")));
+        paragraph(parent, "감지 " + timeLabel(charge.optLong("startAt")) + " → " + timeLabel(charge.optLong("endAt")));
+    }
+
     private void renderTripHistory() {
         heading(body, "운행 기록");
+        renderCostTooltip(false);
         if (recorder.verifiedOwner().isEmpty()) {
             paragraph(body, "사용자 확인 후 내 운행 목록을 볼 수 있습니다.");
             return;
         }
-        paragraph(body, "이 단말의 완료된 운행 · 서버 요약 우선 표시 · 금액은 추정 비용");
         JSONArray history = tripStatisticsRecords();
         RecordStatistics statistics = renderStatistics(0, history, "주행거리", "km");
         if (statistics.count == 0) paragraph(body, "선택한 기간의 완료된 운행 기록이 없습니다.");
+        int visible = 0;
         for (int i = 0; i < history.length(); i++) {
             JSONObject data = history.optJSONObject(i);
             if (data == null || statistics.bucket(data.opt("statAt")) < 0) continue;
+            if (++visible > historyLimit[0]) { moreHistory = true; break; }
             TripSummary local = new TripSummary(data);
             JSONObject remote = recorder.serverSummary(data.optString("intervalId"));
             boolean electric = data.optBoolean("evDetected") || !data.has("startFuelLiters");
@@ -720,9 +864,45 @@ public final class CarHomeActivity extends AppCompatActivity {
             entry.setFocusable(true);
             link(entry, "상세 내용 · N빵 계산", () -> openTrip(tripId));
         }
-        Button refresh = button("운행 요약 새로 확인", false, () -> { recorder.refreshTripHistory(); render(); });
-        refresh.setEnabled(online());
-        body.addView(refresh, fullButton());
+        renderHistoryEnd();
+    }
+
+    private void renderCostTooltip(boolean charge) {
+        link(body, "금액 계산 기준 ⓘ", () -> {
+            if (!started || !allowed || apiAlert != null || consentAlert != null) return;
+            String message = charge
+                    ? "추정 금액 = 충전량(kWh) × 충전 당시 위치 주변의 완속 참고 단가(원/kWh).\n\n주변 사업자별 가까운 충전소의 요금을 평균한 저장 단가를 사용합니다. 참고 충전소와 단가는 각 기록에서 확인할 수 있습니다."
+                    : "전기차 추정 금액 = 소모 전력량(kWh) × 주변 완속 평균 단가(원/kWh).\n소모 전력량 = 주행거리(km) ÷ 전비(km/kWh).\n\n기존에 저장된 운행일 기준 단가를 사용합니다. 내연기관은 연료 소모량(L) × 확인된 연료 단가(원/L)로 계산합니다.";
+            apiAlert = new AlertDialog.Builder(this).setTitle("금액 계산 기준")
+                    .setMessage(message + "\n\n위치·요금이 확인되지 않으면 계산할 수 없습니다. 실제 결제금액과 다를 수 있습니다.")
+                    .setPositiveButton("확인", null).create();
+            apiAlert.setOnDismissListener(dialog -> apiAlert = null);
+            apiAlert.show();
+        });
+    }
+
+    private void renderHistoryEnd() {
+        if (moreHistory) {
+            TextView hint = label("아래로 스크롤하면 기록을 더 불러옵니다", 22, false, true);
+            hint.setTag("history.more");
+            hint.setFocusable(true);
+            hint.setOnClickListener(view -> loadMoreHistory());
+            body.addView(hint, fullButton());
+        }
+    }
+
+    private void loadMoreHistory() {
+        if (!allowed || !moreHistory || !selectedTripId.isEmpty() || (page != TRIP && page != FUEL)) return;
+        int y = contentScroll.getScrollY();
+        historyLimit[page == TRIP ? 0 : 1] += 10;
+        render();
+        contentScroll.post(() -> contentScroll.scrollTo(0, y));
+    }
+
+    private LinearLayout.LayoutParams spacedButton() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
+        params.setMargins(dp(4), dp(6), dp(4), dp(10));
+        return params;
     }
 
     private void openTrip(String id) {
@@ -760,16 +940,16 @@ public final class CarHomeActivity extends AppCompatActivity {
             Button tab = button(labels[i], statisticsPeriod[screen] == i, () -> { statisticsPeriod[screen] = mode; render(); });
             tab.setTag("statistics." + screen + ".period." + i);
             tab.setSelected(statisticsPeriod[screen] == i);
-            tabs.addView(tab, new LinearLayout.LayoutParams(0, -2, 1));
+            tabs.addView(tab, spacedButton());
         }
         int period = statisticsPeriod[screen];
         LocalDate date = statisticsDate[screen];
         String dateLabel = period == 0 ? date.toString() : period == 1 ? java.time.YearMonth.from(date).toString() : String.valueOf(date.getYear());
         subheading(panel, dateLabel);
         LinearLayout controls = new com.pleos.fuelog.ui.AdaptiveRow(this, 160); panel.addView(controls);
-        controls.addView(button("이전", false, () -> moveStatistics(screen, -1)), new LinearLayout.LayoutParams(0, -2, 1));
-        controls.addView(button("오늘 기준", false, () -> { statisticsDate[screen] = LocalDate.now(); render(); }), new LinearLayout.LayoutParams(0, -2, 1));
-        controls.addView(button("다음", false, () -> moveStatistics(screen, 1)), new LinearLayout.LayoutParams(0, -2, 1));
+        controls.addView(button("이전", false, () -> moveStatistics(screen, -1)), spacedButton());
+        controls.addView(button("오늘 기준", false, () -> { statisticsDate[screen] = LocalDate.now(); render(); }), spacedButton());
+        controls.addView(button("다음", false, () -> moveStatistics(screen, 1)), spacedButton());
         RecordStatistics statistics = new RecordStatistics(records, date, period, java.time.ZoneId.systemDefault());
         paragraph(panel, statistics.count + "건 · 합계 " + (statistics.count > 0 && statistics.missingValues == statistics.count
                 ? "계산 불가" : metric(statistics.total, " " + unit)));
@@ -777,7 +957,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 ? "계산 불가" : statistics.amount.toPlainString() + "원"));
         if (statistics.missingValues > 0 || statistics.missingAmounts > 0)
             paragraph(panel, "측정값 미확인 " + statistics.missingValues + "건 · 금액 미확인 " + statistics.missingAmounts + "건은 합계에서 제외");
-        paragraph(panel, screen == 0 ? "운행 종료일 기준 · 이 단말의 완료 기록" : "모바일 확인된 주유만 집계 · 주유량·금액은 서버 추정값");
+        paragraph(panel, screen == 0 ? "운행 종료일 기준" : screen == 2 ? "충전 시작일 기준 · 기각된 후보 제외 · 금액은 충전 당시 위치의 완속 참고 요금으로 추정" : "모바일 확인된 주유만 집계 · 주유량·금액은 서버 추정값");
         double max = 0;
         for (double value : statistics.values) max = Math.max(max, value);
         paragraph(panel, "세로축 " + unit + " · 가로축 " + (period == 0 ? "시간" : period == 1 ? "일" : "월")
@@ -795,7 +975,8 @@ public final class CarHomeActivity extends AppCompatActivity {
             bar.setContentDescription(bucket + " " + value + " " + unit + ", " + statistics.counts[i] + "건, 측정 미확인 "
                     + (statistics.counts[i] - statistics.measured[i]) + "건");
             bar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-            TextView number = label(value, 18, false, false);
+            TextView number = label(statistics.counts[i] == 0 ? "" : value, 18, false, false);
+            number.setTextSize(18);
             number.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             bar.addView(number);
             View fill = new View(this);
@@ -803,9 +984,11 @@ public final class CarHomeActivity extends AppCompatActivity {
             bar.addView(fill, new LinearLayout.LayoutParams(dp(24), dp(statistics.values[i] > 0 && max > 0
                     ? Math.max(2, (int) (120 * statistics.values[i] / max)) : 1)));
             TextView caption = label(bucket, 18, false, true);
+            caption.setTextSize(18);
+            caption.setPadding(0, dp(8), 0, 0);
             caption.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             bar.addView(caption);
-            chart.addView(bar, new LinearLayout.LayoutParams(dp(84), dp(210)));
+            chart.addView(bar, new LinearLayout.LayoutParams(dp(60), dp(210)));
         }
         paragraph(panel, "주황색 막대는 측정값이 일부 없는 구간입니다. 일시 미확인 기록은 통계에서 제외합니다.");
         return statistics;
@@ -934,7 +1117,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         try {
             fuelSyncCall = connection.request("GET", "charge-candidates/" + UUID.fromString(id), null, "", new ResultCallback() {
                 public void onSuccess(ApiResponse response) { runOnUiThread(() -> {
-                    if (version != fuelSyncGeneration || !started || !allowed || page != TRIP) return;
+                    if (version != fuelSyncGeneration || !started || !allowed || (page != TRIP && page != FUEL)) return;
                     fuelSyncBusy = false;
                     try {
                         JSONObject result = new JSONObject(response.getBody());
@@ -956,6 +1139,17 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     // 6. 주유 확인: 연료 증가 후보를 확인하고 모바일 처리 상태를 갱신한다.
     private void renderFuel() {
+        if (recorder.electricVehicle()) {
+            if (!selectedTripId.isEmpty()) { renderTrip(); return; }
+            heading(body, "충전 기록");
+            TripSummary summary = recorder.summary();
+            if (summary != null && recorder.chargingInterval()) {
+                String id = summary.data.optString("intervalId");
+                link(body, "현재 충전 관측 요약", () -> openTrip(id));
+            }
+            renderChargeHistory();
+            return;
+        }
         heading(body, "주유 기록");
         if (recorder.verifiedOwner().isEmpty()) {
             paragraph(body, "계정 귀속을 확인할 수 없습니다. 이번 운행 사용자를 먼저 확인해 주세요.");
@@ -1175,29 +1369,26 @@ public final class CarHomeActivity extends AppCompatActivity {
     // 7. 정비 확인: 서버 요약을 읽고 날짜·거리 기준의 예정 정보를 표시한다.
     private void renderMaintenance() {
         heading(body, "차량 관리");
-        renderVehicleOdometer();
-        renderMaintenanceCycles();
+        renderMaintenanceCycles(body);
     }
 
-    private void renderMaintenanceCycles() {
+    private void renderMaintenanceCycles(LinearLayout parent) {
         if (!maintenanceVehicleId.equals(connection.vehicleId)) maintenanceSummary = null;
-        sectionLabel(body, "차량 공용 정비 주기");
+        sectionLabel(parent, "차량 공용 정비 주기");
         MaintenanceSummary summary = maintenanceSummary;
         if (summary == null) {
-            paragraph(body, maintenanceMessage);
+            paragraph(parent, maintenanceMessage);
         } else {
-            detail(body, "서버에 저장된 누적거리", maintenanceDistance(summary.odometerKm));
-            paragraph(body, "거리 갱신 · " + timeLabel(summary.odometerKm == null ? 0 : summary.odometerObservedAt));
             long now = System.currentTimeMillis();
-            if (!summary.hasRecentOdometer(now)) paragraph(body, "최신 거리 확인 필요");
+            if (!summary.hasRecentOdometer(now)) paragraph(parent, "최신 거리 확인 필요");
             LocalDate today=LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
             for(String basis:new String[]{"MANUFACTURER","USER"}) {
-                sectionLabel(body,basis.equals("MANUFACTURER")?"제조사 정비 항목":"사용자 설정 정비");
+                sectionLabel(parent,basis.equals("MANUFACTURER")?"진행 중인 제조사 정비":"사용자 설정 정비");
                 boolean found=false;
                 for(MaintenanceSummary.Item item:summary.items) {
                     if(!basis.equals(item.basisCode)) continue;
                     found=true;
-                    LinearLayout card = section(body);
+                    LinearLayout card = section(parent);
                     subheading(card, item.name);
                     String cycle = item.intervalKm == null ? "" : maintenanceDistance(item.intervalKm);
                     if (item.intervalMonths != null) cycle += (cycle.isEmpty() ? "" : " 또는 ") + item.intervalMonths + "개월";
@@ -1207,7 +1398,16 @@ public final class CarHomeActivity extends AppCompatActivity {
                     paragraph(card, "다음 예정 · " + maintenanceDate(item.nextDate)
                             + " · " + maintenanceDistance(item.nextKm));
                     paragraph(card, "주기 출처 · " + item.basis);
-                    paragraph(card, item.replacementDday(today));
+                    subheading(card,item.replacementDday(today));
+                    int progress=item.cycleProgress(summary,today,now);
+                    if(progress>=0) {
+                        android.widget.ProgressBar bar=new android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+                        bar.setMax(100);bar.setProgress(progress);
+                        bar.setProgressTintList(ColorStateList.valueOf(color(progress>=100?R.color.car_warning_text:R.color.car_link)));
+                        bar.setContentDescription("정비 주기 "+progress+"% 경과");
+                        LinearLayout.LayoutParams track=new LinearLayout.LayoutParams(-1,dp(12));track.setMargins(0,dp(12),0,dp(12));card.addView(bar,track);
+                        paragraph(card,"주기 "+progress+"% 경과 · 날짜와 거리 중 먼저 도달하는 기준");
+                    }
                     if (item.nextKm != null) {
                         Double remaining = item.kmUntil(summary, now);
                         paragraph(card, remaining == null ? "남은 거리 · 최신 거리 확인 필요"
@@ -1222,27 +1422,71 @@ public final class CarHomeActivity extends AppCompatActivity {
                     }
                 }
                 if(!found) {
-                    paragraph(body,basis.equals("MANUFACTURER")?"등록된 제조사 정비 기준이 없습니다.":"등록된 사용자 정비 항목이 없습니다.");
+                    paragraph(parent,basis.equals("MANUFACTURER")?"등록된 제조사 정비 기준이 없습니다.":"등록된 사용자 정비 항목이 없습니다.");
                     if(basis.equals("USER") && canEditMaintenance()) {
                         Button add=button("사용자 정비 등록",true,()->openMaintenanceEditor(true));
-                        add.setEnabled(online());body.addView(add,fullButton());
+                        add.setEnabled(online());parent.addView(add,fullButton());
                     }
                 }
             }
         }
-        Button refresh = button("정비 정보 새로 확인", false, this::loadMaintenance);
-        refresh.setEnabled(online() && !connection.vehicleId.isEmpty());
-        body.addView(refresh, fullButton());
+        if (summary != null) {
+            sectionLabel(parent,"제조사 기본 정비 목록");
+            if(summary.manufacturerDefaults.length()==0) paragraph(parent,"등록된 제조사 정비 자료가 없습니다.");
+            LinearLayout options = null;
+            for(int i=0;i<summary.manufacturerDefaults.length();i++) {
+                JSONObject item=summary.manufacturerDefaults.optJSONObject(i);if(item==null) continue;
+                if (options == null || options.getChildCount() == 2) {
+                    options = new com.pleos.fuelog.ui.AdaptiveRow(this, 400); parent.addView(options, new LinearLayout.LayoutParams(-1, -2));
+                }
+                LinearLayout option=section(options);subheading(option,item.optString("name"));
+                LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -2, 1);
+                cell.setMargins(dp(4), 0, dp(4), dp(12)); option.setLayoutParams(cell);
+                String cycle = item.isNull("intervalKm") ? "" : metric(item.optDouble("intervalKm"), " km");
+                if (!item.isNull("intervalMonths")) cycle += (cycle.isEmpty() ? "" : " 또는 ") + item.optInt("intervalMonths") + "개월";
+                paragraph(option, cycle.isEmpty() ? "기본 주기 확인 필요" : "기본 주기 · " + cycle);
+                JSONObject evidence=item.optJSONObject("evidence");
+                boolean applicable=evidence!=null && evidence.optBoolean("verified");
+                if(evidence!=null) paragraph(option,evidence.optString("manufacturer")+" · "+evidence.optString("model")
+                        +" · "+evidence.optInt("modelYearFrom")+"~"+evidence.optInt("modelYearTo")+"년식");
+                boolean active=!item.isNull("activePlanId") && !item.optString("activePlanId").isEmpty();
+                paragraph(option,active?"진행 중인 정비에서 다음 일정을 확인할 수 있습니다":applicable?"제조사 자료 기준 · 차종·연식 일치 확인은 생략합니다":"제조사 자료의 검증 상태를 확인해 주세요");
+                if(canEditMaintenance()) {
+                    Button select=button(active?"관리 중": "선택 · 시작일 지정",false,()->startManufacturerMaintenance(item));
+                    select.setTag("maintenance.default.select."+item.optString("id"));
+                    select.setEnabled(online() && applicable && !active);option.addView(select,fullButton());
+                }
+            }
+        }
+        if(summary!=null && summary.completedServices.length()>0) {
+            sectionLabel(parent,"정비 완료 기록");
+            for(int i=0;i<summary.completedServices.length();i++) {
+                JSONObject item=summary.completedServices.optJSONObject(i);if(item==null) continue;
+                LinearLayout done=section(parent);subheading(done,item.optString("name"));
+                paragraph(done,"완료일 · "+item.optString("serviceDate"));
+                if(!item.isNull("odometerKm")) paragraph(done,"완료 당시 · "+metric(item.optDouble("odometerKm")," km"));
+                paragraph(done,"완료 기록과 다음 정비 계획 저장 완료");
+            }
+        }
+        Button refresh = button("정비 정보 갱신", false, this::loadMaintenance);
+        refresh.setTag("maintenance.refresh");
+        boolean refreshing = maintenanceCall != null;
+        refresh.setEnabled(!refreshing && online() && !connection.vehicleId.isEmpty());
+        refresh.setContentDescription(refreshing ? "정비 정보 갱신 중" : "정비 정보 갱신");
+        android.graphics.drawable.AnimatedVectorDrawable refreshIcon =
+                (android.graphics.drawable.AnimatedVectorDrawable) getDrawable(R.drawable.maintenance_refresh).mutate();
+        refreshIcon.setTint(color(refresh.isEnabled() ? R.color.car_foreground : R.color.car_muted));
+        refreshIcon.setBounds(0, 0, dp(28), dp(28));
+        refresh.setCompoundDrawablesRelative(refreshIcon, null, null, null);
+        refresh.setCompoundDrawablePadding(dp(12));
+        if (refreshing) refreshIcon.start();
+        parent.addView(refresh, fullButton());
         if (canEditMaintenance()) {
             Button manage = button(summary.items.isEmpty()?"첫 정비 주기 등록":"정비 항목 등록 · 관리", false, this::openMaintenanceEditor);
             manage.setTag("maintenance.manage"); manage.setEnabled(online());
-            body.addView(manage, fullButton());
+            parent.addView(manage, fullButton());
         }
-        if (page == MAINTENANCE) primary(body, "모바일에서 기록", () -> new AlertDialog.Builder(this)
-                .setTitle("모바일에서 기록")
-                .setMessage("휴대폰 fuelog 앱의 차계부에서 정비 기록을 등록하거나 정비 주기를 설정해 주세요.")
-                .setPositiveButton("확인", null).show());
-        paragraph(body, "교체주기는 차량 공용 정보이며 오너 계정에서 변경할 수 있습니다. 확인된 마지막 교체 기록으로 다음 예정을 계산합니다.");
+        paragraph(parent, "교체주기는 차량 공용 정보이며 오너 계정에서 변경할 수 있습니다. 확인된 마지막 교체 기록으로 다음 예정을 계산합니다.");
     }
 
     private boolean canEditMaintenance() {
@@ -1269,6 +1513,16 @@ public final class CarHomeActivity extends AppCompatActivity {
         else if(create) maintenanceEditor.create();else maintenanceEditor.show();
     }
 
+    private void startManufacturerMaintenance(JSONObject item) {
+        if(!started || !allowed || !online() || !canEditMaintenance()) return;
+        closeMaintenanceEditor();
+        String owner=recorder.verifiedOwner(),vehicle=connection.vehicleId;
+        maintenanceEditor=new MaintenancePlanEditor(this,connection,
+                ()->started && allowed && canEditMaintenance() && showingMaintenance()
+                        && owner.equals(recorder.verifiedOwner()) && vehicle.equals(connection.vehicleId),this::loadMaintenance);
+        maintenanceEditor.startManufacturer(item);
+    }
+
     private void closeMaintenanceEditor() {
         if (maintenanceEditor != null) maintenanceEditor.close();
         maintenanceEditor = null;
@@ -1287,7 +1541,6 @@ public final class CarHomeActivity extends AppCompatActivity {
             render(); return;
         }
         maintenanceMessage = "정비 정보를 확인 중입니다";
-        render();
         final int generation = maintenanceGeneration;
         maintenanceVehicleId = connection.vehicleId;
         try {
@@ -1319,12 +1572,12 @@ public final class CarHomeActivity extends AppCompatActivity {
             });
         } catch (Exception error) {
             maintenanceMessage = "연결 서버 설정을 확인해 주세요";
-            render();
         }
+        render();
     }
 
     private boolean showingMaintenance() {
-        return page == HOME || page == MAINTENANCE || page == CONNECT && startTab == 1;
+        return page == HOME || page == MAINTENANCE || page == CONNECT;
     }
 
     private boolean maintenanceVisible(int generation) {
@@ -1340,65 +1593,79 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     // 8. 연결·설정: 제공 상태 확인 → 사용자 해제 또는 차량 등록 초기화.
     private void renderSettings() {
-        heading(body, "연결·설정");
-        boolean collection=getSharedPreferences("recording_service",MODE_PRIVATE).getBoolean("enabled",true);
-        paragraph(body,collection?"화면을 닫아도 차량 기록 수집을 유지합니다":"차량 기록 수집이 중지되어 있습니다");
-        link(body,collection?"차량 기록 수집 중지":"차량 기록 수집 시작",()-> {
-            getSharedPreferences("recording_service",MODE_PRIVATE).edit().putBoolean("enabled",!collection).apply();
-            if(collection) stopService(new Intent(this,com.pleos.fuelog.home.RecordingService.class));
-            else {liveRecorderStarted=false;startLiveRecorder();}
+        boolean pending = !settings.pending().isEmpty();
+        LinearLayout aliasRow = row(); aliasRow.setGravity(Gravity.CENTER_VERTICAL);
+        body.addView(aliasRow, new LinearLayout.LayoutParams(-1, -2));
+        TextView alias = label(connection.vehicleAlias.isBlank() ? "차량 별칭 미설정" : connection.vehicleAlias, 36, true, false);
+        aliasRow.addView(alias, new LinearLayout.LayoutParams(0, -2, 1));
+        android.widget.ImageButton edit = new android.widget.ImageButton(this);
+        edit.setImageResource(R.drawable.ic_edit_vehicle_alias);
+        edit.setImageTintList(ColorStateList.valueOf(color(R.color.car_link)));
+        edit.setContentDescription("차량 별칭 수정"); edit.setTag("settings.alias.edit");
+        edit.setBackground(shape(R.color.car_panel, 16, R.color.car_line));
+        edit.setOnClickListener(view -> editVehicleAlias()); edit.setEnabled(!pending);
+        aliasRow.addView(edit, new LinearLayout.LayoutParams(dp(64), dp(64)));
+        detail(body, "인증된 사용자", recorder.verifiedOwner().isEmpty() ? "사용자 확인 필요"
+                : connection.authenticatedName.isBlank() ? "이메일 확인 중" : connection.authenticatedName);
+        statusChip(body, "휴대폰 · " + (connection.linked && !pending ? "연결됨" : "연결 안 됨"), connection.linked && !pending);
+        boolean collection = getSharedPreferences("recording_service", MODE_PRIVATE).getBoolean("enabled", true);
+        settingsSwitch("차량 기록 수집", "settings.collection", collection, !pending, enabled -> {
+            getSharedPreferences("recording_service", MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply();
+            if (!enabled) stopService(new Intent(this, com.pleos.fuelog.home.RecordingService.class));
+            else { liveRecorderStarted = false; startLiveRecorder(); }
             render();
         });
-        if(android.os.Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)
-            link(body,"충전 완료 알림 허용",()-> {if(started && allowed) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},107);});
-        paragraph(body, connection.vinStatus);
-        if (!connection.receivedVin.isEmpty()) paragraph(body, "VIN 수신값 · " + connection.receivedVin);
-        link(body, "VIN 다시 조회", () -> connection.recheckVin(() -> { if (started && allowed) render(); }));
-        detail(body, "차량 별칭", connection.vehicleAlias.isBlank() ? "미설정" : connection.vehicleAlias);
-        link(body, "차량 별칭 수정", this::editVehicleAlias);
-        boolean pending = !settings.pending().isEmpty();
-        detail(body, "설치 등록 방식", connection.usesIssuedInstallation() ? "서버 발급 설치 ID 사용" : "이전 설치 인증 보존 중");
-        if (!connection.installationId.isEmpty()) detail(body, "설치 ID", connection.installationId);
-        paragraph(body, recorder.syncMessage());
-        paragraph(body, "서버 수신 sequence · " + (connection.syncStatus.isNull("lastAcceptedSequence") ? "연결 필요 · 수신값 없음" : connection.syncStatus.optLong("lastAcceptedSequence"))
-                + " · 사용자 큐 확인 " + (connection.queueStatus.length() == 0 ? "미확인" : "서버 응답 수신"));
-        detail(body, "인증된 사용자", recorder.displayUser());
-        paragraph(body, "연결을 끊기 전까지 이 사용자의 기록으로 저장합니다. 사용자 변경은 연결 끊기 후 다시 페어링하세요.");
-        detail(body, "휴대폰 연결", pending ? "로컬 잠금 · 서버 해제 대기" : connection.linked ? "차량 등록됨" : "등록 확인 필요");
-        detail(body, "연결 기기 별칭", pending || recorder.verifiedOwner().isEmpty() ? "사용자 확인 필요" : settings.snapshot.optString("deviceAlias", "미확인"));
-        detail(body, "기록 상태", recorder.trip.status(System.currentTimeMillis()));
-        detail(body, "동기화 상태", settings.snapshot.optString("syncStatus").equals("SYNCED") ? "서버 동기화 완료" : "미전송 기록 보관 · 동기화 확인 필요");
-        paragraph(body, "마지막 동기화 " + timeLabel(settings.snapshot.opt("lastSyncedAt")));
-        sectionLabel(body, "데이터 제공 상태");
-        detail(body, "연료", featureStatus("fuel"));
-        boolean batteryAllowed = checkSelfPermission("android.car.permission.CAR_ENERGY") == android.content.pm.PackageManager.PERMISSION_GRANTED;
-        detail(body, "배터리 읽기 권한", batteryAllowed ? "허용됨" : "권한 필요");
-        if (!batteryAllowed) link(body, "배터리 읽기 권한 허용", () -> {
-            requestServicePermission("android.car.permission.CAR_ENERGY", 102);
+        settingsSwitch("충전 완료 알림", "settings.chargeNotifications", connection.notifications.enabled(),
+                !pending && !recorder.verifiedOwner().isEmpty() && connection.notifications.loaded() && !connection.notifications.busy, enabled -> {
+                    connection.notifications.save(enabled, () -> {
+                        if (!started || !allowed) return;
+                        if (!connection.notifications.busy && !connection.notifications.error.isEmpty())
+                            android.widget.Toast.makeText(this, connection.notifications.error, android.widget.Toast.LENGTH_LONG).show();
+                        if (!connection.notifications.enabled()) getSystemService(android.app.NotificationManager.class).cancel(4102);
+                        if (!connection.notifications.busy && enabled && connection.notifications.enabled()
+                                && android.os.Build.VERSION.SDK_INT >= 33
+                                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                            requestServicePermission("android.permission.POST_NOTIFICATIONS", 107);
+                        render();
+                    });
+                });
+        if (!connection.notifications.error.isEmpty()) paragraph(body, connection.notifications.error);
+        if (!androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled())
+            statusChip(body, "OS 알림 권한 · 미허용", false);
+        statusChip(body, "배터리 읽기 · " + (checkSelfPermission("android.car.permission.CAR_ENERGY") == android.content.pm.PackageManager.PERMISSION_GRANTED ? "허용됨" : "미허용"),
+                checkSelfPermission("android.car.permission.CAR_ENERGY") == android.content.pm.PackageManager.PERMISSION_GRANTED);
+        boolean locationAllowed = checkSelfPermission(com.pleos.fuelog.location.PleosLocationClient.PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        statusChip(body, "위치 읽기 · " + (locationAllowed ? "허용됨" : "미허용"), locationAllowed);
+        LinearLayout assist = row(); assist.setGravity(Gravity.CENTER_VERTICAL);
+        body.addView(assist, new LinearLayout.LayoutParams(-1, -2));
+        compactAction(assist, recorder.locationAssistConsent() ? "차량 위치 보조 동의 철회" : "차량 위치 보조에 동의", () -> {
+            if (!recorder.locationAssistConsent()) {
+                if (consentAlert != null || recorder.verifiedOwner().isEmpty()) return;
+                consentOwner = recorder.verifiedOwner();
+                final String owner = consentOwner;
+                consentAlert = ConsentDialogs.builder(this, "차량 위치 보조 — 선택 동의", ConsentDialogs.locationAssistMessage())
+                        .setPositiveButton("위치 보조에 동의", (dialog, which) -> { saveLocationAssistDecision(owner, true); render(); })
+                        .setNegativeButton("동의 안 함", null).create();
+                consentAlert.setOnDismissListener(dialog -> consentAlert = null);
+                ConsentDialogs.show(this, consentAlert); return;
+            }
+            try { recorder.setLocationAssistConsent(false); render(); }
+            catch (IOException error) { android.widget.Toast.makeText(this, "위치 동의 저장 실패", android.widget.Toast.LENGTH_SHORT).show(); }
         });
-        detail(body, "거리", featureStatus("distance"));
-        detail(body, "위치", featureStatus("location"));
-        boolean locationAllowed = checkSelfPermission(com.pleos.fuelog.location.PleosLocationClient.PERMISSION)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED;
-        detail(body, "위치 읽기 권한", locationAllowed ? "허용됨" : "권한 필요");
-        if (!locationAllowed) link(body, "위치 읽기 권한 허용", () -> {
-            requestServicePermission(com.pleos.fuelog.location.PleosLocationClient.PERMISSION, 105);
+        Button info = button("ⓘ", false, () -> {
+            if (apiAlert != null) return;
+            apiAlert = ConsentDialogs.builder(this, "차량 위치 보조", ConsentDialogs.locationAssistMessage())
+                    .setPositiveButton("확인", null).create();
+            apiAlert.setOnDismissListener(dialog -> apiAlert = null); ConsentDialogs.show(this, apiAlert);
         });
-        paragraph(body, settings.message);
-        paragraph(body, "차량 위치 보조 · " + (recorder.locationAssistConsent() ? "동의함" : "사용 안 함")
-                + " · 연료·배터리 증가 시 주변 주유소·충전소 후보를 찾는 데 사용합니다.");
-        link(body, recorder.locationAssistConsent() ? "차량 위치 보조 동의 철회" : "차량 위치 보조에 동의", () -> {
-            try { recorder.setLocationAssistConsent(!recorder.locationAssistConsent()); render(); }
-            catch (IOException error) { paragraph(body, "위치 동의 저장 실패"); }
-        });
+        info.setContentDescription("차량 위치 보조 설명"); assist.addView(info, new LinearLayout.LayoutParams(dp(64), dp(64)));
         if (pending) {
             paragraph(body, "원격 연결은 아직 해제 완료로 확인되지 않았습니다.");
             Button retry = button(settings.busy ? "처리 중" : "서버 해제 다시 확인", true, () -> settings.retry(this::settingsChanged));
             retry.setEnabled(!settings.busy); body.addView(retry, fullButton());
         } else {
-            link(body, "연결 상태 새로 확인", () -> settings.refresh(this::settingsChanged));
-            link(body, "연결 끊기 · 사용자 변경", () -> disconnect("USER"));
-            link(body, "차량 등록 초기화", () -> disconnect("VEHICLE"));
+            compactAction(body, "연결 끊기 · 사용자 변경", () -> disconnect("USER"));
+            compactAction(body, "차량 등록 초기화", () -> disconnect("VEHICLE"));
             if (!connection.linked) link(body, "차량 다시 등록", () -> navigate(CONNECT));
         }
         if (!pending && connection.linked && !recorder.verifiedOwner().isEmpty()
@@ -1410,13 +1677,47 @@ public final class CarHomeActivity extends AppCompatActivity {
                     .setMessage("휴대폰 fuelog의 M04에서 자동 사용자 추천 설정을 변경한 뒤 상태를 새로 확인해 주세요.")
                     .setPositiveButton("확인", null).show());
         }
+        if (!connection.installationId.isEmpty()) {
+            TextView installation = label("Install ID · " + connection.installationId, 16, false, true);
+            installation.setTextSize(16); installation.setPadding(0, dp(24), 0, 0);
+            body.addView(installation, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    private void settingsSwitch(String title, String tag, boolean checked, boolean enabled, java.util.function.Consumer<Boolean> changed) {
+        androidx.appcompat.widget.SwitchCompat toggle = new androidx.appcompat.widget.SwitchCompat(this);
+        toggle.setText(title); toggle.setTextSize(24); toggle.setTextColor(color(R.color.car_foreground));
+        toggle.setMinHeight(dp(64)); toggle.setPadding(dp(16), dp(8), dp(16), dp(8));
+        toggle.setBackground(shape(R.color.car_panel, 16, R.color.car_line));
+        toggle.setTag(tag); toggle.setChecked(checked); toggle.setEnabled(enabled);
+        toggle.setShowText(true); toggle.setTextOn("ON"); toggle.setTextOff("OFF");
+        toggle.setSwitchTextAppearance(this, R.style.SettingsSwitchText);
+        toggle.setSwitchMinWidth(dp(80)); toggle.setThumbTextPadding(dp(8));
+        toggle.setOnCheckedChangeListener((view, value) -> changed.accept(value));
+        body.addView(toggle, fullButton());
+    }
+
+    private void statusChip(LinearLayout parent, String title, boolean positive) {
+        TextView chip = label(title, 22, true, false);
+        chip.setTextColor(color(positive ? R.color.car_link : R.color.car_muted));
+        chip.setPadding(dp(14), dp(8), dp(14), dp(8));
+        chip.setBackground(shape(positive ? R.color.car_accent_light : R.color.car_soft, 24, 0));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
+        params.setMargins(0, dp(6), 0, dp(10)); parent.addView(chip, params);
+    }
+
+    private void compactAction(LinearLayout parent, String title, Runnable action) {
+        Button actionButton = button(title, false, action); actionButton.setMaxWidth(dp(360));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
+        params.setMargins(0, dp(4), dp(12), dp(8)); parent.addView(actionButton, params);
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(requestCode, permissions, grants);
+        if (requestCode >= 102 && requestCode <= 107) startupPermissionsInFlight = false;
         if (requestCode == 106) connection.recheckVin(() -> { if (started && allowed) render(); });
         if (requestCode == 105) { startupPermissionsInFlight = false; if (started && allowed) render(); }
-        if (requestCode == 102 && started && allowed) render();
+        if ((requestCode == 102 || requestCode == 107) && started && allowed) render();
         if (requestCode == 104 && started && allowed) { fuelSyncMessage = "위치 권한 설정 후 주유소 조회를 다시 눌러 주세요"; render(); }
         if (requestCode == 103) {
             String tripId=costPermissionTripId;costPermissionTripId="";
@@ -1462,9 +1763,8 @@ public final class CarHomeActivity extends AppCompatActivity {
     private void settingsChanged() {
         recorder.configureStationSearch(settings.snapshot.optBoolean("pleosCoordinateSystemVerified"),
                 settings.snapshot.optString("fuelType"));
-        if (started && allowed && page == SETTINGS) {
+        if (started && allowed && (page == SETTINGS || page == HOME)) {
             if (settings.pending().isEmpty() && !connection.linked) {
-                startTab = 0;
                 navigate(CONNECT);
             } else render();
         }
@@ -1528,7 +1828,6 @@ public final class CarHomeActivity extends AppCompatActivity {
     private String[][] pageApis() {
         switch (page) {
             case CONNECT:
-                if (startTab == 1) return new String[][]{{"차량 등록 정보", "GET", "installations/me"}, {"공동 정비 정보", "GET", "maintenance/summary"}};
                 if (connection.usesPairingApi()) return new String[][]{
                         {"설치 ID 발급", "POST", "installations"}, {"설치 연결 복원", "GET", "installations/me"},
                         {"차량 QR 발급", "POST", "pairing-requests"}, {"QR 승인 조회", "GET", "pairing-requests/{id}"},
@@ -1588,13 +1887,14 @@ public final class CarHomeActivity extends AppCompatActivity {
         consentOwner = recorder.verifiedOwner();
         boolean battery = permission.equals("android.car.permission.CAR_ENERGY");
         boolean vin = permission.equals("pleos.car.permission.CAR_INFO");
-        consentAlert = new AlertDialog.Builder(this).setTitle(vin ? "VIN 읽기 권한" : battery ? "배터리 읽기 권한" : "위치 읽기 권한")
-                .setMessage((vin ? "같은 차량을 식별하고 기존 차량 UUID를 재사용하려면 VIN 읽기 권한이 필요합니다." : battery ? "배터리 잔량과 사용량을 기록하려면 배터리 읽기 권한이 필요합니다."
-                        : "현재 차량 위치로 주변 주유소·충전소를 조회하려면 위치 권한이 필요합니다.")
-                        + "\n\n권한 요청이 표시되지 않으면 앱 권한 설정에서 허용해 주세요.")
-                .setPositiveButton("권한 허용", (dialog, which) -> {
+        boolean notification = permission.equals("android.permission.POST_NOTIFICATIONS");
+        consentAlert = ConsentDialogs.builder(this, notification ? "충전 완료 알림" : vin ? "차량 식별 정보 읽기" : battery ? "배터리 정보 읽기" : "차량 위치 읽기",
+                notification ? ConsentDialogs.notificationPermissionMessage() : vin ? "사용 목적\n이 차량을 식별하고 기존 차량 등록 정보를 불러오는 데 사용합니다.\n\n허용 범위\n차량 식별 정보를 읽습니다. 차량 설정은 변경하지 않습니다.\n\n거절하면\n차량 식별과 연결 기능이 제한될 수 있습니다."
+                        : battery ? ConsentDialogs.batteryPermissionMessage() : ConsentDialogs.locationPermissionMessage())
+                .setPositiveButton("시스템 권한 확인", (dialog, which) -> {
                     if (!started || !allowed) return;
                     getSharedPreferences("startup_consent", MODE_PRIVATE).edit().putBoolean(permission, true).apply();
+                    startupPermissionsInFlight = true;
                     requestPermissions(new String[]{permission}, requestCode);
                 })
                 .setNeutralButton("앱 권한 설정", (dialog, which) -> {
@@ -1602,7 +1902,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                             android.net.Uri.parse("package:" + getPackageName())));
                 }).setNegativeButton("취소", null).create();
         consentAlert.setOnDismissListener(dialog -> consentAlert = null);
-        consentAlert.show();
+        ConsentDialogs.show(this, consentAlert);
     }
 
     private void closeConsentAlert() {
@@ -1611,7 +1911,7 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private void showStartupConsent() {
         if (!started || !allowed || !connection.linked || isFinishing() || isDestroyed() || consentAlert != null
-                || startupPermissionsInFlight || !settings.pending().isEmpty()) return;
+                || startupPermissionsInFlight || connection.checkingVehicle() || !settings.pending().isEmpty()) return;
         android.content.SharedPreferences preferences = getSharedPreferences("startup_consent", MODE_PRIVATE);
         consentOwner = recorder.verifiedOwner();
         String[] permissions = {com.pleos.fuelog.location.PleosLocationClient.PERMISSION, "android.car.permission.CAR_ENERGY"};
@@ -1621,9 +1921,12 @@ public final class CarHomeActivity extends AppCompatActivity {
                     && !preferences.getBoolean(permission, false)) missing.add(permission);
         }
         if (!missing.isEmpty()) {
-            consentAlert = new AlertDialog.Builder(this).setTitle("선택 접근 권한 안내")
-                    .setMessage("위치: 주변 주유소·충전소 검색에 사용합니다.\n배터리 읽기: 차량 배터리 잔량과 사용량 기록에 필요합니다.\n\n허용하지 않아도 앱을 사용할 수 있으며 해당 기능만 제한됩니다. 설정에서 나중에 허용할 수 있습니다.")
-                    .setPositiveButton("권한 확인", (dialog, which) -> {
+            String requestedPermission = missing.get(0);
+            boolean locationPermission = requestedPermission.equals(com.pleos.fuelog.location.PleosLocationClient.PERMISSION);
+            missing.clear(); missing.add(requestedPermission);
+            consentAlert = ConsentDialogs.builder(this, locationPermission ? "차량 위치 읽기" : "배터리 정보 읽기",
+                    locationPermission ? ConsentDialogs.locationPermissionMessage() : ConsentDialogs.batteryPermissionMessage())
+                    .setPositiveButton("시스템 권한 확인", (dialog, which) -> {
                         if (!started || !allowed) return;
                         android.content.SharedPreferences.Editor editor = preferences.edit();
                         for (String permission : missing) editor.putBoolean(permission, true);
@@ -1637,16 +1940,15 @@ public final class CarHomeActivity extends AppCompatActivity {
                     }).create();
         } else if (!consentOwner.isEmpty() && !recorder.locationAssistDecisionMade()) {
             final String owner = consentOwner;
-            consentAlert = new AlertDialog.Builder(this).setTitle("차량 위치 보조 동의")
-                    .setMessage("연료·배터리 증가 시 차량 위치로 주변 주유소·충전소 후보를 조회하고 기록에 연결합니다. 조회에 필요한 위치를 서버로 전송합니다.\n\n선택 동의이며, 거절해도 기본 기록을 사용할 수 있습니다. 연결·설정에서 언제든 변경할 수 있습니다.")
-                    .setPositiveButton("동의", (dialog, which) -> saveLocationAssistDecision(owner, true))
+            consentAlert = ConsentDialogs.builder(this, "차량 위치 보조 — 선택 동의", ConsentDialogs.locationAssistMessage())
+                    .setPositiveButton("위치 보조에 동의", (dialog, which) -> saveLocationAssistDecision(owner, true))
                     .setNegativeButton("동의 안 함", (dialog, which) -> saveLocationAssistDecision(owner, false)).create();
         } else return;
         if (apiAlert != null) { apiAlert.dismiss(); apiAlert = null; }
         consentAlert.setCanceledOnTouchOutside(false);
         consentAlert.setCancelable(false);
         consentAlert.setOnDismissListener(dialog -> { consentAlert = null; body.post(this::showStartupConsent); });
-        consentAlert.show();
+        ConsentDialogs.show(this, consentAlert);
     }
 
     private void saveLocationAssistDecision(String owner, boolean consent) {
