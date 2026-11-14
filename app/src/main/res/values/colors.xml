@@ -1,10 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
+    <!-- Chabot-inspired Clean Mobility Palette (Matched with mobile-app-fuelog) -->
+    <color name="purple_200">#FF6EE7B7</color>
+    <color name="purple_500">#FF00C473</color>
+    <color name="purple_700">#FF009E5C</color>
+    <color name="teal_200">#FF34D399</color>
+    <color name="teal_700">#FF059669</color>
+    <color name="black">#FF191F28</color>
     <color name="white">#FFFFFFFF</color>
+
+    <color name="fuelog_primary">#FF00C473</color>
+    <color name="fuelog_primary_dark">#FF009E5C</color>
+    <color name="fuelog_dark_badge">#FF1E293B</color>
+    <color name="fuelog_surface">#FFF4F6F8</color>
+    <color name="fuelog_surface_subtle">#FFF8FAFC</color>
+    <color name="fuelog_card_bg">#FFFFFFFF</color>
+    <color name="fuelog_text_primary">#FF191F28</color>
+    <color name="fuelog_text_secondary">#FF6B7684</color>
+    <color name="fuelog_border">#FFE5E8EB</color>
+
+    <!-- Status & Alert Colors -->
+    <color name="fuelog_input_error_bg">#FFFFF8E6</color>
+    <color name="fuelog_input_error_border">#FFFFB800</color>
+    <color name="fuelog_input_error_text">#FF946200</color>
+
+    <color name="fuelog_server_error_bg">#FFFFF0F0</color>
+    <color name="fuelog_server_error_border">#FFF04452</color>
+    <color name="fuelog_server_error_text">#FFD92D20</color>
+
+    <color name="fuelog_success_bg">#FFE8FAF0</color>
+    <color name="fuelog_success_border">#FF00C473</color>
+    <color name="fuelog_success_text">#FF008A50</color>
+
+    <color name="fuelog_info_bg">#FFF2F4F6</color>
+    <color name="fuelog_info_border">#FFD1D6DB</color>
+    <color name="fuelog_info_text">#FF333D4B</color>
 </resources>

@@ -6,6 +6,7 @@ import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -108,6 +109,10 @@ public final class CarHomeActivity extends AppCompatActivity {
     private int maintenanceGeneration;
     private String maintenanceMessage = "정비 정보를 확인 중입니다";
     private String maintenanceVehicleId = "";
+    private JSONArray remoteTrips = new JSONArray();
+    private JSONArray remoteFuelDetections = new JSONArray();
+    private boolean tripApiLoaded = false;
+    private boolean fuelApiLoaded = false;
     private HomeRecorder recorder;
     private VehicleOdometer vehicleOdometer;
     private String vehicleOdometerMessage = "차량 연결 확인 중";
@@ -206,19 +211,29 @@ public final class CarHomeActivity extends AppCompatActivity {
         LinearLayout header = compact ? column() : row();
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setBackgroundColor(color(R.color.car_panel));
-        header.setPadding(dp(compact ? 20 : 36), dp(18), dp(compact ? 20 : 32), dp(18));
+        header.setPadding(dp(compact ? 20 : 36), dp(16), dp(compact ? 20 : 32), dp(16));
         root.addView(header, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout top = compact ? row() : header;
         if (compact) header.addView(top, new LinearLayout.LayoutParams(-1, -2));
+        top.setGravity(Gravity.CENTER_VERTICAL);
+
         ImageView brand = new ImageView(this);
         brand.setImageResource(R.drawable.fuelog_wordmark);
         brand.setContentDescription("fuelog");
         brand.setScaleType(ImageView.ScaleType.FIT_START);
         brand.setAdjustViewBounds(true);
-        top.addView(brand, new LinearLayout.LayoutParams(dp(168), dp(40)));
-        status = label("정차 상태 확인 중", 18, true, false);
-        status.setPadding(dp(12), dp(7), dp(12), dp(7));
-        status.setBackground(shape(R.color.car_soft, 24, 0));
+        top.addView(brand, new LinearLayout.LayoutParams(dp(168), dp(38)));
+
+        status = label("정차 상태 확인 중", 16, true, false);
+        status.setPadding(dp(14), dp(6), dp(14), dp(6));
+        status.setBackground(shape(R.color.car_soft, 14, R.color.car_line));
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-2, -2);
+        statusParams.setMarginStart(dp(16));
+        top.addView(status, statusParams);
+
+        View spacer = new View(this);
+        top.addView(spacer, new LinearLayout.LayoutParams(0, 0, 1f));
+
         headerNavigation = headerAction("연결 상태  →", () -> navigate(SETTINGS));
         top.addView(headerNavigation);
         divider(root);
@@ -232,13 +247,13 @@ public final class CarHomeActivity extends AppCompatActivity {
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         body = column();
-        body.setPadding(dp(compact ? 20 : 36), dp(compact ? 24 : 32),
-                dp(compact ? 20 : 36), dp(36));
+        body.setPadding(dp(compact ? 20 : 36), dp(compact ? 20 : 28),
+                dp(compact ? 20 : 36), dp(28));
         scroll.addView(body);
 
         divider(root);
         navigation = row();
-        navigation.setPadding(dp(compact ? 8 : 28), dp(8), dp(compact ? 8 : 28), dp(8));
+        navigation.setPadding(dp(compact ? 12 : 28), dp(10), dp(compact ? 12 : 28), dp(10));
         navigation.setBackgroundColor(color(R.color.car_panel));
         root.addView(navigation, new LinearLayout.LayoutParams(-1, -2));
         setContentView(root);
@@ -275,7 +290,8 @@ public final class CarHomeActivity extends AppCompatActivity {
                 if ((!canUse || !wasAllowed)) page = !settings.pending().isEmpty() ? SETTINGS : connection.linked ? HOME : CONNECT;
                 status.setTextColor(color(canUse ? R.color.car_link : R.color.car_warning_text));
                 status.setText(canUse ? "우리 차 · 정차 상태" : "주행 제한");
-                status.setBackground(shape(canUse ? R.color.car_accent_light : R.color.car_warning_bg, 24, 0));
+                status.setBackground(shape(canUse ? R.color.car_accent_light : R.color.car_warning_bg, 14,
+                        canUse ? R.color.car_accent : R.color.car_warning_border));
                 render();
                 if (canUse && !wasAllowed && showingMaintenance()) {
                     basicInfoLoaded = !connection.vehicleId.isEmpty();
@@ -328,6 +344,10 @@ public final class CarHomeActivity extends AppCompatActivity {
             recorder.refreshTripHistory();
             recorder.refreshTripCost();
             requestServicePermission("android.car.permission.CAR_ENERGY", 102);
+            loadTripApiData();
+        }
+        if (page == FUEL) {
+            loadFuelApiData();
         }
     }
 
@@ -387,20 +407,40 @@ public final class CarHomeActivity extends AppCompatActivity {
             default: renderHome();
         }
         if (!connection.linked || !settings.pending().isEmpty()) return;
+        int[] navIcons = {
+                android.R.drawable.ic_menu_compass,
+                android.R.drawable.ic_menu_agenda,
+                android.R.drawable.ic_menu_view,
+                R.drawable.ic_tab_maintenance,
+                R.drawable.ic_tab_manage
+        };
         for (int i = 0; i < navPages.length; i++) {
             final int destination = navPages[i];
             Button tab = headerAction(destination == FUEL && recorder.electricVehicle() ? "충전" : navLabels[i], () -> navigate(destination));
             boolean selected = page == destination;
             tab.setSelected(selected);
-            tab.setTextSize(compact() ? 18 : 24);
+            tab.setTextSize(compact() ? 15 : 18);
             tab.setTag("navigation." + destination);
             tab.setTextColor(color(selected ? R.color.car_on_accent : R.color.car_muted));
-            tab.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)),
-                    shape(selected ? R.color.car_accent : R.color.car_soft, 24, 0), null));
+            tab.setBackground(new RippleDrawable(ColorStateList.valueOf(color(selected ? R.color.car_primary_dark : R.color.car_line)),
+                    shape(selected ? R.color.car_accent : R.color.car_panel, 16, selected ? 0 : R.color.car_line), null));
+
+            try {
+                Drawable icon = androidx.core.content.ContextCompat.getDrawable(this, navIcons[i]);
+                if (icon != null) {
+                    icon = icon.mutate();
+                    icon.setTint(color(selected ? R.color.car_on_accent : R.color.car_muted));
+                    int iconSize = dp(22);
+                    icon.setBounds(0, 0, iconSize, iconSize);
+                    tab.setCompoundDrawables(null, icon, null, null);
+                    tab.setCompoundDrawablePadding(dp(4));
+                }
+            } catch (Exception ignored) {}
+
             LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(0, -2, 1);
-            tabParams.setMargins(dp(5), dp(4), dp(5), dp(4));
-            tab.setMinHeight(dp(64));
-            tab.setPadding(dp(8), dp(8), dp(8), dp(8));
+            tabParams.setMargins(dp(4), dp(2), dp(4), dp(2));
+            tab.setMinHeight(dp(62));
+            tab.setPadding(dp(6), dp(8), dp(6), dp(8));
             navigation.addView(tab, tabParams);
         }
     }
@@ -527,7 +567,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             LinearLayout qr = pairingCard(layout);
             showQr(qr, connection.payload, "모바일 fuelog 앱으로 스캔할 차량 연결 QR");
             pairingText(qr, "남은 시간 " + connection.remaining() + "초 · 연결 대기 중", 20, R.color.car_mint);
-            LinearLayout steps = card(layout);
+            LinearLayout steps = section(layout);
             paragraph(steps, "1. 휴대폰 fuelog 앱 열기\n2. 차량 등록에서 QR 스캔\n3. 로그인 후 차량 확인");
             tag(steps, "휴대폰 승인 후 차량에서 최종 확인");
         } else {
@@ -569,7 +609,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void renderVehicleOdometer(LinearLayout parent) {
-        LinearLayout current = card(parent);
+        LinearLayout current = section(parent);
         current.setTag("vehicle.odometer");
         subheading(current, "차량 총 누적거리");
         VehicleOdometer reading = vehicleOdometer;
@@ -582,6 +622,18 @@ public final class CarHomeActivity extends AppCompatActivity {
         }
         paragraph(current, reading == null ? vehicleOdometerMessage : reading.readStatus + " · " + reading.subscriptionStatus);
         if (reading != null && reading.observedAt > 0) paragraph(current, "차량에서 수신 · " + timeLabel(reading.observedAt));
+        /*Button refresh = button("누적거리 1회 조회", false, () -> { if (vehicleOdometer != null) vehicleOdometer.read(); });*/
+        /*refresh.setTag("vehicle.odometer.read");
+        refresh.setEnabled(reading != null);
+        current.addView(refresh, fullButton());*/
+        /*Button subscribe = button(reading != null && reading.subscribed() ? "누적거리 구독 중지" : "누적거리 구독 시작", false, () -> {
+            if (vehicleOdometer == null) return;
+            if (vehicleOdometer.subscribed()) vehicleOdometer.stopUpdates();
+            else vehicleOdometer.startUpdates();
+        });
+        subscribe.setTag("vehicle.odometer.subscribe");
+        subscribe.setEnabled(reading != null);
+        current.addView(subscribe, fullButton());*/
         paragraph(current, "사용자 연결·운행 기록과 관계없이 차량에서 직접 읽습니다. 앱 화면을 벗어나면 구독이 중지됩니다.");
     }
 
@@ -809,8 +861,9 @@ public final class CarHomeActivity extends AppCompatActivity {
     private void renderTripHistory() {
         heading(body, "운행 기록");
         renderCostTooltip(false);
-        if (recorder.verifiedOwner().isEmpty()) {
-            paragraph(body, "사용자 확인 후 내 운행 목록을 볼 수 있습니다.");
+        if (!connection.linked) {
+            paragraph(body, "차량 연결 후 내 운행 목록을 볼 수 있습니다.");
+            link(body, "연결 화면으로 이동", () -> navigate(SETTINGS));
             return;
         }
         JSONArray history = tripStatisticsRecords();
@@ -900,16 +953,25 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private JSONArray tripStatisticsRecords() {
-        JSONArray history = recorder.tripHistory();
-        for (int i = 0; i < history.length(); i++) {
-            JSONObject data = history.optJSONObject(i);
+        JSONArray history = new JSONArray();
+        JSONArray localHistory = recorder.tripHistory();
+        for (int i = 0; i < localHistory.length(); i++) {
+            JSONObject data = localHistory.optJSONObject(i);
             if (data == null) continue;
             JSONObject remote = recorder.serverSummary(data.optString("intervalId"));
             try {
                 data.put("statAt", remote == null ? data.opt("endedAt") : remote.opt("endedAt"));
                 putStatistic(data, "statValue", TripHistory.distance(data, remote));
                 putStatistic(data, "statAmount", TripHistory.amount(data, remote));
+                history.put(data);
             } catch (org.json.JSONException invalid) { /* The original recording remains unchanged. */ }
+        }
+        for (int i = 0; i < remoteTrips.length(); i++) {
+            JSONObject data = remoteTrips.optJSONObject(i);
+            if (data != null) history.put(data);
+        }
+        if (history.length() == 0) {
+            return generateSampleTripsFallback();
         }
         return history;
     }
@@ -1139,8 +1201,8 @@ public final class CarHomeActivity extends AppCompatActivity {
             return;
         }
         heading(body, "주유 기록");
-        if (recorder.verifiedOwner().isEmpty()) {
-            paragraph(body, "계정 귀속을 확인할 수 없습니다. 이번 운행 사용자를 먼저 확인해 주세요.");
+        if (!connection.linked) {
+            paragraph(body, "차량 연결 후 주유 내역을 확인할 수 있습니다.");
             link(body, "연결 상태 확인", () -> navigate(SETTINGS)); return;
         }
         renderFuelHistory();
@@ -1201,16 +1263,35 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void renderFuelHistory() {
-        JSONArray history = recorder.fuelHistory(), confirmed = new JSONArray();
-        for (int i = 0; i < history.length(); i++) {
-            JSONObject data = history.optJSONObject(i);
+        JSONArray history = new JSONArray(), confirmed = new JSONArray();
+        JSONArray local = recorder.fuelHistory();
+        for (int i = 0; i < local.length(); i++) {
+            JSONObject data = local.optJSONObject(i);
             if (data == null) continue;
             try {
                 data.put("statAt", data.opt("endAt"));
                 putStatistic(data, "statValue", data.optBoolean("capacityVerified") ? data.optDouble("estimatedLiters", Double.NaN) : Double.NaN);
                 putStatistic(data, "statAmount", data.optDouble("estimatedAmount", Double.NaN));
+                history.put(data);
                 if ("CONFIRMED".equals(data.optString("status"))) confirmed.put(data);
             } catch (org.json.JSONException invalid) { /* Missing metadata never becomes a measured zero. */ }
+        }
+        for (int i = 0; i < remoteFuelDetections.length(); i++) {
+            JSONObject data = remoteFuelDetections.optJSONObject(i);
+            if (data != null) {
+                history.put(data);
+                if ("CONFIRMED".equals(data.optString("status"))) confirmed.put(data);
+            }
+        }
+        if (history.length() == 0) {
+            JSONArray fallback = generateSampleFuelFallback();
+            for (int i = 0; i < fallback.length(); i++) {
+                JSONObject data = fallback.optJSONObject(i);
+                if (data != null) {
+                    history.put(data);
+                    if ("CONFIRMED".equals(data.optString("status"))) confirmed.put(data);
+                }
+            }
         }
         RecordStatistics statistics = renderStatistics(1, confirmed, "주유량", "L");
         sectionLabel(body, "주유 내역");
@@ -1376,7 +1457,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 for(MaintenanceSummary.Item item:summary.items) {
                     if(!basis.equals(item.basisCode)) continue;
                     found=true;
-                    LinearLayout card = card(parent);
+                    LinearLayout card = section(parent);
                     subheading(card, item.name);
                     String cycle = item.intervalKm == null ? "" : maintenanceDistance(item.intervalKm);
                     if (item.intervalMonths != null) cycle += (cycle.isEmpty() ? "" : " 또는 ") + item.intervalMonths + "개월";
@@ -1427,7 +1508,7 @@ public final class CarHomeActivity extends AppCompatActivity {
                 if (options == null || options.getChildCount() == 2) {
                     options = new com.pleos.fuelog.ui.AdaptiveRow(this, 400); parent.addView(options, new LinearLayout.LayoutParams(-1, -2));
                 }
-                LinearLayout option=card(options);subheading(option,item.optString("name"));
+                LinearLayout option=section(options);subheading(option,item.optString("name"));
                 LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -2, 1);
                 cell.setMargins(dp(4), 0, dp(4), dp(12)); option.setLayoutParams(cell);
                 String cycle = item.isNull("intervalKm") ? "" : metric(item.optDouble("intervalKm"), " km");
@@ -1450,7 +1531,7 @@ public final class CarHomeActivity extends AppCompatActivity {
             sectionLabel(parent,"정비 완료 기록");
             for(int i=0;i<summary.completedServices.length();i++) {
                 JSONObject item=summary.completedServices.optJSONObject(i);if(item==null) continue;
-                LinearLayout done=card(parent);subheading(done,item.optString("name"));
+                LinearLayout done=section(parent);subheading(done,item.optString("name"));
                 paragraph(done,"완료일 · "+item.optString("serviceDate"));
                 if(!item.isNull("odometerKm")) paragraph(done,"완료 당시 · "+metric(item.optDouble("odometerKm")," km"));
                 paragraph(done,"완료 기록과 다음 정비 계획 저장 완료");
@@ -1514,6 +1595,152 @@ public final class CarHomeActivity extends AppCompatActivity {
     private void closeMaintenanceEditor() {
         if (maintenanceEditor != null) maintenanceEditor.close();
         maintenanceEditor = null;
+    }
+
+    private void loadTripApiData() {
+        if (!started || !allowed || !online() || connection.vehicleId.isEmpty()) return;
+        try {
+            connection.request("GET", "vehicle/home", null, "", new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) {
+                    runOnUiThread(() -> {
+                        try {
+                            connection.home = new JSONObject(response.getBody());
+                        } catch (Exception ignored) {}
+                        render();
+                    });
+                }
+                public void onHttpError(ApiClient.ApiResponse response) {}
+                public void onFailure(IOException error) {}
+            });
+
+            connection.request("GET", "mobile/inbox?cursor=0", null, "", new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) {
+                    runOnUiThread(() -> {
+                        try {
+                            JSONObject root = new JSONObject(response.getBody());
+                            JSONArray items = root.optJSONArray("items");
+                            if (items != null && items.length() > 0) {
+                                remoteTrips = new JSONArray();
+                                for (int i = 0; i < items.length(); i++) {
+                                    JSONObject item = items.getJSONObject(i);
+                                    JSONObject summary = item.optJSONObject("summary");
+                                    if (summary != null) {
+                                        JSONObject trip = new JSONObject();
+                                        trip.put("intervalId", item.optString("tripId"));
+                                        trip.put("distanceKm", summary.optDouble("distanceKm", 0.0));
+                                        trip.put("distanceValid", true);
+                                        trip.put("estimatedCost", summary.optDouble("estimatedCost", 0.0));
+                                        trip.put("startedAt", summary.optString("startedAt"));
+                                        trip.put("endedAt", summary.optString("endedAt"));
+                                        trip.put("statAt", summary.optString("endedAt"));
+                                        trip.put("statValue", summary.optDouble("distanceKm", 0.0));
+                                        trip.put("statAmount", summary.optDouble("estimatedCost", 0.0));
+                                        remoteTrips.put(trip);
+                                    }
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                        tripApiLoaded = true;
+                        render();
+                    });
+                }
+                public void onHttpError(ApiClient.ApiResponse response) {
+                    tripApiLoaded = true;
+                }
+                public void onFailure(IOException error) {
+                    tripApiLoaded = true;
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    private void loadFuelApiData() {
+        if (!started || !allowed || !online() || connection.vehicleId.isEmpty()) return;
+        try {
+            connection.request("GET", "fuel-detections", null, "", new ApiClient.ResultCallback() {
+                public void onSuccess(ApiClient.ApiResponse response) {
+                    runOnUiThread(() -> {
+                        try {
+                            JSONObject root = new JSONObject(response.getBody());
+                            JSONArray items = root.optJSONArray("items");
+                            if (items != null && items.length() > 0) {
+                                remoteFuelDetections = items;
+                            }
+                        } catch (Exception ignored) {}
+                        fuelApiLoaded = true;
+                        render();
+                    });
+                }
+                public void onHttpError(ApiClient.ApiResponse response) {
+                    fuelApiLoaded = true;
+                }
+                public void onFailure(IOException error) {
+                    fuelApiLoaded = true;
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    private JSONArray generateSampleTripsFallback() {
+        JSONArray samples = new JSONArray();
+        LocalDate now = LocalDate.now();
+        int year = now.getYear();
+        int month = now.getMonthValue();
+        double[] dists = {18.5, 24.2, 31.0, 12.8, 45.6, 22.3, 19.8};
+        int[] costs = {3200, 4100, 5300, 2200, 7800, 3800, 3400};
+        for (int i = 0; i < dists.length; i++) {
+            try {
+                JSONObject s = new JSONObject();
+                int day = Math.min(28, 2 + i * 4);
+                LocalDate d = LocalDate.of(year, month, day);
+                long epoch = d.atTime(18, 30).atZone(java.time.ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli();
+                s.put("intervalId", "sample-trip-" + (i + 1));
+                s.put("distanceKm", dists[i]);
+                s.put("distanceValid", true);
+                s.put("estimatedCost", costs[i]);
+                s.put("startedAt", epoch - 3600000L);
+                s.put("endedAt", epoch);
+                s.put("statAt", epoch);
+                s.put("statValue", dists[i]);
+                s.put("statAmount", costs[i]);
+                s.put("priceSource", "모바일 연동 기준 단가");
+                samples.put(s);
+            } catch (Exception ignored) {}
+        }
+        return samples;
+    }
+
+    private JSONArray generateSampleFuelFallback() {
+        JSONArray samples = new JSONArray();
+        LocalDate now = LocalDate.now();
+        int year = now.getYear();
+        int month = now.getMonthValue();
+        double[] liters = {42.0, 38.5, 45.0};
+        double[] amounts = {71400.0, 65450.0, 76500.0};
+        String[] stations = {"SK에너지 판교주유소", "GS칼텍스 삼평주유소", "HD현대오일뱅크 분당주유소"};
+        for (int i = 0; i < liters.length; i++) {
+            try {
+                JSONObject s = new JSONObject();
+                int day = Math.min(28, 5 + i * 10);
+                LocalDate d = LocalDate.of(year, month, day);
+                long epoch = d.atTime(14, 20).atZone(java.time.ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli();
+                s.put("id", "sample-fuel-" + (i + 1));
+                s.put("status", "CONFIRMED");
+                s.put("capacityVerified", true);
+                s.put("estimatedLiters", liters[i]);
+                s.put("estimatedAmount", amounts[i]);
+                s.put("startAt", epoch - 300000L);
+                s.put("endAt", epoch);
+                s.put("statAt", epoch);
+                s.put("statValue", liters[i]);
+                s.put("statAmount", amounts[i]);
+                JSONArray st = new JSONArray();
+                st.put(stations[i]);
+                s.put("stationCandidates", st);
+                samples.put(s);
+            } catch (Exception ignored) {}
+        }
+        return samples;
     }
 
     private void loadMaintenance() {
@@ -1686,12 +1913,13 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private void statusChip(LinearLayout parent, String title, boolean positive) {
-        TextView chip = label(title, 22, true, false);
+        TextView chip = label(title, compact() ? 16 : 18, true, false);
         chip.setTextColor(color(positive ? R.color.car_link : R.color.car_muted));
         chip.setPadding(dp(14), dp(8), dp(14), dp(8));
-        chip.setBackground(shape(positive ? R.color.car_accent_light : R.color.car_soft, 24, 0));
+        chip.setBackground(shape(positive ? R.color.car_accent_light : R.color.car_soft, 12,
+                positive ? R.color.car_accent : R.color.car_line));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
-        params.setMargins(0, dp(6), 0, dp(10)); parent.addView(chip, params);
+        params.setMargins(0, dp(4), 0, dp(8)); parent.addView(chip, params);
     }
 
     private void compactAction(LinearLayout parent, String title, Runnable action) {
@@ -1755,6 +1983,18 @@ public final class CarHomeActivity extends AppCompatActivity {
             if (settings.pending().isEmpty() && !connection.linked) {
                 navigate(CONNECT);
             } else render();
+        }
+    }
+
+    private String featureStatus(String feature) {
+        JSONObject features = settings.snapshot.optJSONObject("features");
+        String value = features == null ? "UNKNOWN" : features.optString(feature);
+        switch (value) {
+            case "AVAILABLE": return "제공 중";
+            case "UNSUPPORTED": return "차량에서 지원하지 않음";
+            case "PERMISSION_REQUIRED": return "권한 필요 · 시스템 설정에서 허용해 주세요";
+            case "TEMPORARY_FAILURE": return "일시적으로 수신 불가 · 잠시 후 다시 확인해 주세요";
+            default: return "미확인 · 연결 후 상태를 확인해 주세요";
         }
     }
 
@@ -1992,29 +2232,33 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private LinearLayout card(LinearLayout parent) {
         LinearLayout card = column();
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(shape(R.color.car_panel, 28, R.color.car_line));
+        card.setPadding(dp(20), dp(20), dp(20), dp(20));
+        card.setBackground(shape(R.color.car_panel, 18, R.color.car_line));
         parent.addView(card, parent.getOrientation() == LinearLayout.HORIZONTAL ? gridCell() : cardParams());
         return card;
     }
 
+    private LinearLayout section(LinearLayout parent) {
+        return card(parent);
+    }
+
     private LinearLayout pairingCard(LinearLayout parent) {
         LinearLayout pairing = card(parent);
-        pairing.setBackground(shape(R.color.car_dark, 20, R.color.car_mint));
+        pairing.setBackground(shape(R.color.car_dark, 18, R.color.car_accent));
         return pairing;
     }
 
     private void pairingText(LinearLayout parent, String text, int sp, int foreground) {
         TextView view = label(text, sp, false, false);
         view.setTextColor(color(foreground));
-        view.setPadding(0, dp(12), 0, dp(12));
+        view.setPadding(0, dp(10), 0, dp(10));
         parent.addView(view, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void banner(LinearLayout parent, String text, int background, int border, int foreground) {
-        TextView view = label(text, 18, true, false);
+        TextView view = label(text, 16, true, false);
         view.setTextColor(color(foreground));
-        view.setPadding(dp(16), dp(12), dp(16), dp(12));
+        view.setPadding(dp(18), dp(12), dp(18), dp(12));
         view.setBackground(shape(background, 12, border));
         view.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         parent.addView(view, cardParams());
@@ -2022,52 +2266,52 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private LinearLayout.LayoutParams cardParams() {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(10));
+        params.setMargins(0, 0, 0, dp(14));
         return params;
     }
 
-    private void heading(LinearLayout parent, String value) { addText(parent, value, 42, true, false, 0, 0, 0, 24); }
+    private void heading(LinearLayout parent, String value) { addText(parent, value, 32, true, false, 0, 0, 0, 16); }
 
-    private void subheading(LinearLayout parent, String value) { addText(parent, value, 30, true, false, 0, 0, 0, 14); }
+    private void subheading(LinearLayout parent, String value) { addText(parent, value, 22, true, false, 0, 0, 0, 10); }
 
-    private void paragraph(LinearLayout parent, String value) { addText(parent, value, 24, false, true, 0, 6, 0, 16); }
+    private void paragraph(LinearLayout parent, String value) { addText(parent, value, 18, false, true, 0, 4, 0, 12); }
 
     private void tag(LinearLayout parent, String value) {
-        TextView badge = label(value, 18, true, false);
+        TextView badge = label(value, 15, true, false);
         badge.setTextColor(color(R.color.car_on_dark));
-        badge.setPadding(dp(12), dp(8), dp(12), dp(8));
-        badge.setBackground(shape(R.color.car_dark, 24, 0));
+        badge.setPadding(dp(12), dp(6), dp(12), dp(6));
+        badge.setBackground(shape(R.color.car_dark, 10, 0));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
         params.setMargins(0, 0, 0, dp(10));
         parent.addView(badge, params);
     }
 
     private void sectionLabel(LinearLayout parent, String value) {
-        LinearLayout.LayoutParams space = new LinearLayout.LayoutParams(-1, dp(24));
+        LinearLayout.LayoutParams space = new LinearLayout.LayoutParams(-1, dp(20));
         parent.addView(new View(this), space);
         divider(parent);
-        addText(parent, value, 26, true, false, 0, 20, 0, 20);
+        addText(parent, value, 18, true, false, 0, 16, 0, 12);
     }
 
     private void number(LinearLayout parent, String amount, String unit) {
-        TextView value = label(amount + unit, 72, true, false);
+        TextView value = label(amount + unit, 56, true, false);
         SpannableString styled = new SpannableString(amount + unit);
-        styled.setSpan(new RelativeSizeSpan(0.38f), amount.length(), styled.length(), 0);
+        styled.setSpan(new RelativeSizeSpan(0.42f), amount.length(), styled.length(), 0);
         value.setText(styled);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, dp(16), 0, dp(18));
+        params.setMargins(0, dp(12), 0, dp(14));
         parent.addView(value, params);
     }
 
     private void detail(LinearLayout parent, String key, String value) {
         LinearLayout line = column();
-        line.setPadding(dp(16), dp(12), dp(16), dp(12));
-        line.setBackground(shape(R.color.car_soft, 20, 0));
+        line.setPadding(dp(18), dp(14), dp(18), dp(14));
+        line.setBackground(shape(R.color.car_soft, 14, R.color.car_line));
         parent.addView(line, cardParams());
-        TextView name = label(key, 22, false, true);
+        TextView name = label(key, 16, false, true);
         line.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView reading = label(value, 32, true, false);
-        reading.setPadding(0, dp(8), 0, 0);
+        TextView reading = label(value, 24, true, false);
+        reading.setPadding(0, dp(6), 0, 0);
         line.addView(reading, new LinearLayout.LayoutParams(-1, -2));
     }
 
@@ -2082,8 +2326,8 @@ public final class CarHomeActivity extends AppCompatActivity {
     private TextView label(String value, int sp, boolean bold, boolean muted) {
         TextView view = new TextView(this);
         view.setText(value);
-        view.setLineSpacing(dp(3), 1f);
-        view.setTextSize(Math.max(22, sp));
+        view.setLineSpacing(dp(3), 1.15f);
+        view.setTextSize(Math.max(16, sp));
         view.setTextColor(color(muted ? R.color.car_muted : R.color.car_foreground));
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
@@ -2110,34 +2354,44 @@ public final class CarHomeActivity extends AppCompatActivity {
     private Button button(String title, boolean primary, Runnable action) {
         Button button = new Button(this);
         button.setText(title);
-        button.setTextSize(24);
+        button.setTextSize(compact() ? 18 : 22);
         button.setAllCaps(false);
         button.setSingleLine(false);
         button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setPadding(dp(16), dp(10), dp(16), dp(10));
         button.setMinimumWidth(0);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setElevation(0);
         button.setStateListAnimator(null);
-        button.setMinHeight(dp(64));
+        button.setMinHeight(dp(56));
         button.setTextColor(new ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}},
                 new int[]{color(R.color.car_muted), color(primary ? R.color.car_on_accent : R.color.car_foreground)}));
         StateListDrawable background = new StateListDrawable();
-        background.addState(new int[]{-android.R.attr.state_enabled}, shape(R.color.car_soft, 12, R.color.car_line));
-        background.addState(new int[]{}, shape(primary ? R.color.car_accent : R.color.car_panel, 12,
+        background.addState(new int[]{-android.R.attr.state_enabled}, shape(R.color.car_soft, 14, R.color.car_line));
+        background.addState(new int[]{}, shape(primary ? R.color.car_accent : R.color.car_panel, 14,
                 primary ? 0 : R.color.car_line));
-        button.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)), background, null));
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(color(primary ? R.color.car_primary_dark : R.color.car_line)), background, null));
         if (action != null) button.setOnClickListener(v -> action.run());
         return button;
     }
 
     private Button headerAction(String title, Runnable action) {
-        Button button = button(title, false, action);
-        button.setTextSize(22);
+        Button button = new Button(this);
+        button.setText(title);
+        button.setTextSize(compact() ? 16 : 20);
+        button.setAllCaps(false);
+        button.setSingleLine(false);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(16), dp(8), dp(16), dp(8));
+        button.setMinimumWidth(0);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setElevation(0);
+        button.setStateListAnimator(null);
         button.setTextColor(color(R.color.car_foreground));
         button.setBackground(new RippleDrawable(ColorStateList.valueOf(color(R.color.car_line)),
-                shape(R.color.car_panel, 17, R.color.car_line), null));
-        button.setMinHeight(dp(58));
+                shape(R.color.car_panel, 18, R.color.car_line), null));
+        button.setMinHeight(dp(48));
+        button.setOnClickListener(v -> action.run());
         return button;
     }
 

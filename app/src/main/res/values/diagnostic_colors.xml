@@ -1,8 +1,9 @@
 <resources>
-    <color name="diagnostic_success">#17653F</color>
-    <color name="diagnostic_success_background">#E6F4EC</color>
-    <color name="diagnostic_caution">#875400</color>
-    <color name="diagnostic_caution_background">#FFF3D6</color>
-    <color name="diagnostic_error">#B3261E</color>
-    <color name="diagnostic_error_background">#FCE8E6</color>
+    <!-- Diagnostic Status Colors (Matched with mobile-app-fuelog palette) -->
+    <color name="diagnostic_success">@color/fuelog_success_text</color>
+    <color name="diagnostic_success_background">@color/fuelog_success_bg</color>
+    <color name="diagnostic_caution">@color/fuelog_input_error_text</color>
+    <color name="diagnostic_caution_background">@color/fuelog_input_error_bg</color>
+    <color name="diagnostic_error">@color/fuelog_server_error_text</color>
+    <color name="diagnostic_error_background">@color/fuelog_server_error_bg</color>
 </resources>
