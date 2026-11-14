@@ -1,0 +1,6 @@
+<resources>
+    <dimen name="mtrl_calendar_day_width">72dp</dimen>
+    <dimen name="mtrl_calendar_day_height">64dp</dimen>
+    <dimen name="mtrl_calendar_days_of_week_height">48dp</dimen>
+    <dimen name="fuelog_calendar_text_size">26sp</dimen>
+</resources>

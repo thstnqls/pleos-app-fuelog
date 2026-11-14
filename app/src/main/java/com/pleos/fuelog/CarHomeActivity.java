@@ -155,6 +155,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     // 1. 앱 진입·복귀: 저장된 연결을 복원하고 화면 이용 제한을 확인한다.
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (!BuildConfig.DEBUG) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (state != null) {
             page = state.getInt("page", HOME);
@@ -191,7 +192,8 @@ public final class CarHomeActivity extends AppCompatActivity {
         LinearLayout root = column();
         root.setBackgroundColor(color(R.color.car_background));
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
-            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout() | WindowInsetsCompat.Type.ime());
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
             return insets;
         });
@@ -220,6 +222,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         divider(root);
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setTag("history.scroll");
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         body = column();
@@ -422,7 +425,6 @@ public final class CarHomeActivity extends AppCompatActivity {
             paragraph(body, "새 차량 등록 시 차량 이름으로 사용합니다.");
             android.widget.EditText alias = new android.widget.EditText(this);
             alias.setTag("pairing.vehicleAlias");
-            alias.setHint("차량 별칭 · 최대 100자");
             alias.setContentDescription("차량 별칭");
             alias.setTextSize(26);
             alias.setSingleLine(true);
@@ -764,7 +766,7 @@ public final class CarHomeActivity extends AppCompatActivity {
         LocalDate date = statisticsDate[screen];
         String dateLabel = period == 0 ? date.toString() : period == 1 ? java.time.YearMonth.from(date).toString() : String.valueOf(date.getYear());
         subheading(panel, dateLabel);
-        LinearLayout controls = row(); panel.addView(controls);
+        LinearLayout controls = new com.pleos.fuelog.ui.AdaptiveRow(this, 160); panel.addView(controls);
         controls.addView(button("이전", false, () -> moveStatistics(screen, -1)), new LinearLayout.LayoutParams(0, -2, 1));
         controls.addView(button("오늘 기준", false, () -> { statisticsDate[screen] = LocalDate.now(); render(); }), new LinearLayout.LayoutParams(0, -2, 1));
         controls.addView(button("다음", false, () -> moveStatistics(screen, 1)), new LinearLayout.LayoutParams(0, -2, 1));
@@ -847,8 +849,10 @@ public final class CarHomeActivity extends AppCompatActivity {
         people.setOnValueChangedListener((picker, before, after) -> update.run());
         update.run();
         paragraph(content, "원 단위 반올림 후 나눕니다. 실제 결제·송금 기능은 없습니다.");
+        ScrollView splitScroll = new ScrollView(this);
+        splitScroll.addView(content);
         tripSplitOwner = owner;
-        tripSplitAlert = new AlertDialog.Builder(this).setTitle("인원별 N빵 계산").setView(content)
+        tripSplitAlert = new AlertDialog.Builder(this).setTitle("인원별 N빵 계산").setView(splitScroll)
                 .setPositiveButton("닫기", null).create();
         tripSplitAlert.show();
     }
@@ -1424,7 +1428,6 @@ public final class CarHomeActivity extends AppCompatActivity {
         if (!started || !allowed || !settings.pending().isEmpty()) return;
         android.widget.EditText input = new android.widget.EditText(this);
         input.setText(connection.vehicleAlias);
-        input.setHint("차량 별칭 · 최대 100자");
         input.setContentDescription("차량 별칭");
         input.setSingleLine(true);
         input.setTextSize(26);
@@ -1697,7 +1700,7 @@ public final class CarHomeActivity extends AppCompatActivity {
     }
 
     private LinearLayout grid(LinearLayout parent) {
-        LinearLayout grid = getResources().getConfiguration().screenWidthDp >= 600 ? row() : column();
+        LinearLayout grid = new com.pleos.fuelog.ui.AdaptiveRow(this, 400);
         parent.addView(grid, new LinearLayout.LayoutParams(-1, -2));
         return grid;
     }
@@ -1894,7 +1897,7 @@ public final class CarHomeActivity extends AppCompatActivity {
 
     private int color(int resource) { return getColor(resource); }
 
-    private boolean compact() { return getResources().getConfiguration().screenWidthDp < 600; }
+    private boolean compact() { return getResources().getConfiguration().screenWidthDp < 960; }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

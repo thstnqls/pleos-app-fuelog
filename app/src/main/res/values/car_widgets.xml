@@ -1,8 +1,4 @@
 <resources>
-    <style name="TextAppearance.Fuelog.FormHint" parent="TextAppearance.MaterialComponents.Caption">
-        <item name="android:textSize">20sp</item>
-        <item name="android:textColor">@color/car_muted</item>
-    </style>
     <style name="Widget.Fuelog.Tabs" parent="Widget.MaterialComponents.TabLayout">
         <item name="tabTextAppearance">@style/TextAppearance.Fuelog.Tab</item>
         <item name="android:minHeight">72dp</item>
@@ -23,5 +19,37 @@
     <style name="Widget.Fuelog.DialogButton" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
         <item name="android:textSize">24sp</item>
         <item name="android:minHeight">72dp</item>
+    </style>
+    <style name="ThemeOverlay.Fuelog.DatePicker" parent="ThemeOverlay.MaterialComponents.MaterialCalendar">
+        <item name="materialCalendarDay">@style/Widget.Fuelog.CalendarDay</item>
+        <item name="materialCalendarDayOfWeekLabel">@style/Widget.Fuelog.CalendarWeekday</item>
+        <item name="materialCalendarHeaderTitle">@style/Widget.Fuelog.CalendarTitle</item>
+        <item name="materialCalendarHeaderSelection">@style/Widget.Fuelog.CalendarSelection</item>
+        <item name="materialCalendarYearNavigationButton">@style/Widget.Fuelog.CalendarYearNavigation</item>
+        <item name="materialCalendarMonthNavigationButton">@style/Widget.Fuelog.CalendarNavigation</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Fuelog.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Fuelog.DialogButton</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarDay" parent="Widget.MaterialComponents.MaterialCalendar.DayTextView">
+        <item name="android:textSize">@dimen/fuelog_calendar_text_size</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarWeekday" parent="Widget.MaterialComponents.MaterialCalendar.DayOfWeekLabel">
+        <item name="android:textSize">20sp</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarNavigation" parent="Widget.MaterialComponents.MaterialCalendar.MonthNavigationButton">
+        <item name="android:textSize">24sp</item>
+        <item name="android:minHeight">64dp</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarTitle" parent="Widget.MaterialComponents.MaterialCalendar.HeaderTitle">
+        <item name="autoSizeTextType">none</item>
+        <item name="android:textSize">20sp</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarSelection" parent="Widget.MaterialComponents.MaterialCalendar.HeaderSelection">
+        <item name="autoSizeTextType">none</item>
+        <item name="android:textSize">24sp</item>
+        <item name="android:maxLines">2</item>
+    </style>
+    <style name="Widget.Fuelog.CalendarYearNavigation" parent="Widget.MaterialComponents.MaterialCalendar.YearNavigationButton">
+        <item name="android:textSize">24sp</item>
     </style>
 </resources>

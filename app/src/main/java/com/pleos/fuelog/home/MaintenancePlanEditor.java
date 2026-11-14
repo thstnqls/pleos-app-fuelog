@@ -33,7 +33,7 @@ public final class MaintenancePlanEditor implements AutoCloseable {
     private final BooleanSupplier allowed;
     private final Runnable saved;
     private AlertDialog dialog;
-    private android.app.DatePickerDialog datePicker;
+    private com.google.android.material.datepicker.MaterialDatePicker<Long> datePicker;
     private okhttp3.Call call;
     private TextView formError;
     private boolean closed;
@@ -241,32 +241,62 @@ public final class MaintenancePlanEditor implements AutoCloseable {
     }
     private EditText field(LinearLayout parent, String label, String value, int type) {
         TextInputLayout box=new TextInputLayout(activity);
-        box.setHint(label);box.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
+        TextView caption = new TextView(activity);
+        caption.setText(label + ((type & InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_DATETIME
+                && !label.contains("YYYY-MM-DD") ? " · YYYY-MM-DD" : ""));
+        caption.setTextSize(20);
+        caption.setTextColor(activity.getColor(R.color.car_foreground));
+        parent.addView(caption, new LinearLayout.LayoutParams(-1, -2));
+        box.setHintEnabled(false);
+        box.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
         box.setBoxCornerRadii(dp(12),dp(12),dp(12),dp(12));
         box.setBoxStrokeColor(activity.getColor(R.color.car_link));
         box.setBoxBackgroundColor(activity.getColor(R.color.car_panel));
-        box.setHintTextAppearance(R.style.TextAppearance_Fuelog_FormHint);
         TextInputEditText input=new TextInputEditText(box.getContext());input.setContentDescription(label);
+        input.setId(android.view.View.generateViewId());
+        caption.setLabelFor(input.getId());
         input.setInputType(type);input.setSingleLine(true);input.setText(value);input.setTextSize(26);
         input.setTextColor(activity.getColor(R.color.car_foreground));
         input.setPadding(dp(16),dp(20),dp(16),dp(16));input.setMinHeight(dp(76));
         input.setImeOptions(input.getImeOptions() | EditorInfo.IME_FLAG_NO_FULLSCREEN);
         box.addView(input,new LinearLayout.LayoutParams(-1,-2));
         if((type & InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_DATETIME) {
-            input.setHint("YYYY-MM-DD");
+            input.setKeyListener(android.text.method.DigitsKeyListener.getInstance("0123456789-"));
+            input.addTextChangedListener(new com.pleos.fuelog.ui.DateInputFormatter(input));
             box.setEndIconMode(TextInputLayout.END_ICON_CUSTOM);box.setEndIconDrawable(android.R.drawable.ic_menu_my_calendar);
             box.setEndIconContentDescription("교체일 달력 열기");
             box.setEndIconOnClickListener(v->{
                 if(!active()) return;
-                LocalDate selected;
-                try {selected=LocalDate.parse(input.getText().toString());}catch(Exception invalid){selected=LocalDate.now(ZoneId.of("Asia/Seoul"));}
-                datePicker=new android.app.DatePickerDialog(activity,(view,year,month,day)->
-                        input.setText(LocalDate.of(year,month+1,day).toString()),selected.getYear(),selected.getMonthValue()-1,selected.getDayOfMonth());
-                datePicker.getDatePicker().setMaxDate(System.currentTimeMillis());datePicker.show();
+                showDatePicker(input);
             });
         }
         LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);layout.setMargins(0,dp(4),0,dp(20));
         parent.addView(box,layout);return input;
+    }
+    private void showDatePicker(EditText input) {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        LocalDate selected;
+        try { selected = LocalDate.parse(input.getText().toString()); }
+        catch (Exception invalid) { selected = today; }
+        LocalDate first = LocalDate.of(1900, 1, 1);
+        if (selected.isBefore(first) || selected.isAfter(today)) selected = today;
+        // MaterialDatePicker represents calendar days at UTC midnight, independent of device time zone.
+        long start = first.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        long end = today.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        long selection = selected.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli();
+        com.google.android.material.datepicker.CalendarConstraints constraints =
+                new com.google.android.material.datepicker.CalendarConstraints.Builder()
+                        .setStart(start).setEnd(end).setOpenAt(selection)
+                        .setValidator(com.google.android.material.datepicker.DateValidatorPointBackward.before(end)).build();
+        datePicker = com.google.android.material.datepicker.MaterialDatePicker.Builder.datePicker()
+                .setTheme(R.style.ThemeOverlay_Fuelog_DatePicker).setTitleText("정비 날짜 선택")
+                .setPositiveButtonText("선택").setNegativeButtonText("취소")
+                .setSelection(selection).setCalendarConstraints(constraints).build();
+        datePicker.addOnPositiveButtonClickListener(value -> input.setText(java.time.Instant.ofEpochMilli(value)
+                .atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()));
+        new androidx.core.view.WindowInsetsControllerCompat(activity.getWindow(), input)
+                .hide(androidx.core.view.WindowInsetsCompat.Type.ime());
+        datePicker.show(activity.getSupportFragmentManager(), "maintenance.datePicker");
     }
     private static String text(JSONObject item, String key) { return item.isNull(key) ? "" : item.optString(key, ""); }
     private interface Success { void accept(JSONObject result) throws Exception; }

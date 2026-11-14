@@ -107,7 +107,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
         content.setPadding(padding, padding, padding, padding);
         scroll.addView(content);
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
-            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
             return insets;
         });
@@ -513,9 +513,7 @@ public final class DiagnosticActivity extends AppCompatActivity {
     }
 
     private LinearLayout actionRow(LinearLayout parent) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(getResources().getConfiguration().screenWidthDp < 600
-                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        LinearLayout row = new com.pleos.fuelog.ui.AdaptiveRow(this, 240);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setBaselineAligned(false);
         parent.addView(row);
