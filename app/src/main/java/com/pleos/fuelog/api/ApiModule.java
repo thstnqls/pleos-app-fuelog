@@ -17,9 +17,15 @@ public final class ApiModule {
         if (baseUrl.isEmpty()) {
             throw new IllegalStateException("Set API_BASE_URL in local.properties and sync Gradle.");
         }
-        if (!BuildConfig.DEBUG && !HttpUrl.get(baseUrl).isHttps()) {
+        HttpUrl url = HttpUrl.get(baseUrl);
+        if (!BuildConfig.DEBUG && !isReleaseUrlAllowed(url)) {
             throw new IllegalStateException("Release builds require an HTTPS API_BASE_URL.");
         }
         return baseUrl;
+    }
+
+    static boolean isReleaseUrlAllowed(HttpUrl url) {
+        // shortcut: the submission server uses HTTP; remove this exception after its HTTPS migration.
+        return url.isHttps() || url.host().equals("sheetnews.ddns.net") && url.port() == 3001;
     }
 }

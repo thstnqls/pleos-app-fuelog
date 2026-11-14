@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+/.signing/
+/docs/
+/AGENTS.md
+/.agents/
+/.codex/

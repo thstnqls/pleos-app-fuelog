@@ -10,6 +10,11 @@ if (localConfigFile.exists()) {
 def apiBaseUrl = providers.gradleProperty('API_BASE_URL')
         .orElse(localConfig.getProperty('API_BASE_URL', '')).get().trim()
 def quotedApiBaseUrl = groovy.json.JsonOutput.toJson(apiBaseUrl)
+def releaseSigning = new Properties()
+def releaseSigningFile = rootProject.file('.signing/release.properties')
+if (releaseSigningFile.exists()) {
+    releaseSigningFile.withInputStream { releaseSigning.load(it) }
+}
 
 android {
     namespace 'com.pleos.fuelog'
@@ -27,8 +32,19 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (!releaseSigning.isEmpty()) {
+            release {
+                storeFile rootProject.file(releaseSigning.getProperty('storeFile'))
+                storePassword releaseSigning.getProperty('storePassword')
+                keyAlias releaseSigning.getProperty('keyAlias')
+                keyPassword releaseSigning.getProperty('keyPassword')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (!releaseSigning.isEmpty()) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
